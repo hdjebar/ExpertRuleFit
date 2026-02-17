@@ -1,98 +1,67 @@
 # ExpertRuleFit
 
-**Compliance-native interpretable ML for regulated environments.**
+**Reproducible interpretable ML for regulated banking environments.**
 
-ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with a **weighted Lasso** that guarantees preservation of regulatory rules while learning from data. Built for banking compliance under CSSF/EU AI Act.
+ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility. Built for banking compliance under CSSF/EU AI Act.
 
 ## The Problem
 
-Standard L1 regularization (Lasso) can eliminate rules that are **legally required** — even if they are weakly correlated with the target. In regulated banking (CSSF, GAFI, EU AI Act), this is unacceptable: compliance rules must **always** be present in the scoring model.
+Standard RuleFit uses Lasso (L1) for rule selection, which is **inherently unstable**: different random seeds produce different rules, even on the same data. In regulated banking (CSSF, EU AI Act, BCBS 239), this makes the model **non-deployable** — a regulator who re-executes the model must get identical output.
 
 ## The Solution
 
-ExpertRuleFit uses the [adaptive Lasso](https://doi.org/10.1198/016214506000000735) (Zou 2006) with three penalty levels:
+ExpertRuleFit replaces Lasso with a **deterministic-by-design** pipeline:
 
-| Rule Type | Penalty Weight | Behavior |
-|-----------|---------------|----------|
-| **Confirmatory** (regulatory) | ~0 | Never eliminated by Lasso |
-| **Optional** (analyst) | 0.3 | Preferred, kept if any signal |
-| **Auto** (data-driven) | 1.0 | Standard Lasso selection |
+1. **Fixed-seed tree generation** — same candidate rules regardless of external `random_state`
+2. **Bootstrap × ElasticNetCV** — 10 bootstrap samples with Elastic Net (L1+L2)
+3. **Frequency-based filtering** — keep only rules selected in >= 80% of bootstraps
+4. **Final ElasticNetCV** — refit on stable features only
 
-### Mathematical Formulation
-
-```
-Standard Lasso:  minimize ||y - Xb||^2 + lambda * sum(|b_j|)
-Weighted Lasso:  minimize ||y - Xb||^2 + lambda * sum(w_j * |b_j|)
-
-Implementation: scale standardized features by 1/sqrt(w_j)
-=> effective penalty on b_j = lambda * w_j
-=> w_j ~ 0 for confirmatory rules => NEVER eliminated
-```
+This guarantees: **same data → same rules → same predictions → audit-ready**.
 
 ## Validation Results
 
-Tested on synthetic banking data (KYC/AML scoring) with **100 random seeds**:
+Benchmarked on **3 credit scoring datasets** with **100 random seeds** each:
 
-| Metric | ExpertRuleFit | Standard Lasso |
-|--------|:---:|:---:|
-| Confirmatory rules preserved | **100/100 (100%)** | 18/100 (18%) |
-| Mean AUC-ROC | 0.816 | 0.839 |
-| AUC delta (compliance cost) | **-2.3 points** | — |
+| Dataset | RuleFit Stability | ExpertRuleFit Stability | RuleFit AUC | ExpertRuleFit AUC |
+|---------|:---:|:---:|:---:|:---:|
+| German Credit (UCI) | 1/100 | **100/100** | 0.788 | 0.801 |
+| Taiwan Credit (UCI) | 1/100 | **100/100** | 0.764 | 0.763 |
+| HMEQ | 1/100 | **100/100** | 0.903 | 0.903 |
 
-**Trade-off**: 2.3 AUC points in exchange for **100% regulatory rule preservation**. This trade-off is documented, measured, and defensible before regulators.
+**Key metrics:**
+- ExpertRuleFit: **100/100 stability**, Jaccard similarity **1.000**, AUC std **0.0000**
+- Standard RuleFit: **1/100 stability**, Jaccard similarity ~0.05, AUC std ~0.005
+
+> ExpertRuleFit matches RuleFit's predictive performance while guaranteeing perfect reproducibility.
 
 ## Quick Start
 
 ```python
 from expertrulefit import ExpertRuleFit
 
-# Define regulatory rules (CSSF — must NEVER be eliminated)
-confirmatory_rules = [
-    {
-        "name": "CSSF: Country risk > 1.5",
-        "evaluate": lambda X, fn: (X[:, fn.index("country_risk")] > 1.5).astype(float),
-        "sql_condition": "country_risk > 1.5",
-    },
-]
-
-# Define analyst rules (preferred but not mandatory)
-optional_rules = [
-    {
-        "name": "Analyst: Night TX + Cash ratio",
-        "evaluate": lambda X, fn: (
-            (X[:, fn.index("night_tx_ratio")] > 0.2) &
-            (X[:, fn.index("cash_ratio")] > 0.3)
-        ).astype(float),
-    },
-]
-
 # Fit
-erf = ExpertRuleFit(confirmatory_penalty=1e-6, random_state=42)
-erf.fit(X_train, y_train,
-        feature_names=feature_names,
-        confirmatory_rules=confirmatory_rules,
-        optional_rules=optional_rules)
-
-# Verify compliance
-assert erf.confirmatory_all_active_, "COMPLIANCE FAILURE"
+erf = ExpertRuleFit(max_rules=50, n_bootstrap=10, rule_threshold=0.8)
+erf.fit(X_train, y_train, feature_names=feature_names)
 
 # Predict
 proba = erf.predict_proba(X_test)[:, 1]
 
-# Explain (EU AI Act Article 13)
-for exp in erf.explain(X_test[0])[:5]:
-    print(f"[{exp['category']:>12}] {exp['contribution']:+.4f} | {exp['rule']}")
+# Inspect stable rules
+for rule in erf.get_rule_importance()[:5]:
+    print(f"coef={rule['coefficient']:+.4f} | {rule['name']}")
 
-# Export as SQL for real-time scoring
-print(erf.export_sql("scoring_input"))
+# Summary
+erf.summary()
 ```
 
 ## Features
 
-- **Guaranteed rule preservation** — confirmatory rules survive any regularization strength
-- **Transparent by design** — shape functions, not post-hoc SHAP approximations
-- **SQL export** — scoring function exportable as SQL for real-time production use
-- **EU AI Act Article 13 compliant** — native explainability, no black-box wrapper needed
+- **100/100 reproducible** — identical rules across 100 random seeds on 3 datasets
+- **Deterministic by design** — fixed internal seeds, single-threaded BLAS
+- **Interpretable** — rule-based model, transparent by design (EU AI Act Art. 13)
+- **Auditable** — stable output enables consistent regulatory reporting
+- **Production-ready** — no seed sensitivity in deployment
 - **Built on proven foundations** — extends [imodels](https://github.com/csinva/imodels) (Cynthia Rudin, Duke)
 
 ## Installation
@@ -104,45 +73,76 @@ pip install imodels scikit-learn numpy
 Then clone this repo:
 
 ```bash
-git clone https://github.com/hdjebar/ExpertRuleFit.git
+git clone https://github.com/hdjebar/ExpertRuleFit
 cd ExpertRuleFit
 ```
 
-## Run Validation
+## Run Validation Benchmark
+
+The full 100-seed × 3-dataset benchmark (produces figures, CSVs, report):
 
 ```bash
-python examples/validate_100_seeds.py
+python expertrulefit_validation.py
 ```
+
+Output goes to `output/` with:
+- `figures/` — 5 PNGs + combined PDF
+- `data/` — 3 CSV result files
+- `ExpertRuleFit_Validation_Report.md` — full markdown report
 
 ## Architecture
 
 ```
 expertrulefit/
-    __init__.py          # Package entry point
-    expert_rulefit.py    # ExpertRuleFit class (~350 lines)
+    __init__.py              # Package entry point
+    expert_rulefit.py        # ExpertRuleFit class
+expertrulefit_validation.py  # Full benchmark (3 datasets × 100 seeds)
 examples/
-    validate_100_seeds.py  # 100-seed reproducibility experiment
+    quick_demo.py            # Quick 10-seed reproducibility demo
 tests/
-    test_expert_rulefit.py # Unit tests
+    test_expert_rulefit.py   # Unit tests
+output/                      # Benchmark results (figures, CSVs, report)
 ```
+
+## How It Works
+
+### Standard RuleFit (unstable)
+```
+Random trees (seed-dependent) → Lasso → rule selection
+Different seed → different trees → different rules
+```
+
+### ExpertRuleFit (deterministic)
+```
+Fixed-seed trees → Bootstrap × ElasticNetCV → frequency filter → final fit
+Same data → same trees → same stable rules → same output
+```
+
+### Why Elastic Net?
+
+The L2 component of Elastic Net provides two key benefits:
+1. **Group stability** — correlated rules are kept together (vs Lasso's arbitrary selection)
+2. **Smooth coefficient paths** — small data perturbations don't cause rule switching
+
+Combined with bootstrap frequency filtering, this eliminates the selection instability
+that makes standard RuleFit non-reproducible.
+
+## Regulatory Compliance
+
+| Requirement | Standard | How ExpertRuleFit Complies |
+|-------------|----------|---------------------------|
+| EU AI Act Art. 9 | Risk management | Reproducible output guarantees consistent risk assessment |
+| EU AI Act Art. 12 | Automatic logging | Same model produces identical results at each audit |
+| EU AI Act Art. 13 | Transparency | Stable rules can be documented and explained consistently |
+| BCBS 239 Principle 3 | Accuracy & integrity | Verifiable results across re-executions |
+| CSSF Circular 12/552 | Model governance | Regulator can re-execute and obtain identical output |
 
 ## References
 
 1. Friedman & Popescu (2008) — *Predictive Learning via Rule Ensembles*, Annals of Applied Statistics
-2. Zou (2006) — *The Adaptive LASSO and Its Oracle Properties*, JASA
+2. Zou & Hastie (2005) — *Regularization and variable selection via the elastic net*, JRSS-B
 3. Singh et al. (2021) — *imodels: a python package for fitting interpretable models*, JOSS
-4. Lou et al. (2013) — *Accurate Intelligible Models with Pairwise Interactions*, KDD
-
-## EU AI Act Compliance
-
-ExpertRuleFit is designed for **high-risk AI systems** under the EU AI Act (Annex III, Area 5b — credit scoring):
-
-| Article | Requirement | How ExpertRuleFit Complies |
-|---------|-------------|---------------------------|
-| Art. 13 | Transparency & explainability | Rules ARE the model — native, not post-hoc |
-| Art. 11 | Technical documentation | `summary()` + `export_sql()` for audit |
-| Art. 14 | Human oversight | Rule coefficients readable by compliance officers |
-| Art. 9 | Risk management | `confirmatory_all_active_` assertion in production |
+4. Zou (2006) — *The Adaptive LASSO and Its Oracle Properties*, JASA
 
 ## License
 

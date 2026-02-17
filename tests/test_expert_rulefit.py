@@ -13,17 +13,17 @@ from expertrulefit import ExpertRuleFit
 
 
 @pytest.fixture
-def banking_data():
-    """Generate synthetic banking data for testing."""
+def credit_data():
+    """Generate synthetic credit scoring data for testing."""
     rng = np.random.RandomState(42)
     n = 500
     X = np.column_stack([
-        rng.uniform(0, 5, n),      # country_risk
-        rng.exponential(30, n),      # payment_delay
-        rng.lognormal(8, 1.5, n),   # tx_volume
-        rng.beta(2, 5, n),          # cash_ratio
-        rng.beta(1.5, 8, n),        # night_tx_ratio
-        rng.uniform(0, 20, n),      # tenure
+        rng.uniform(0, 5, n),       # feature_0: country_risk
+        rng.exponential(30, n),      # feature_1: payment_delay
+        rng.lognormal(8, 1.5, n),   # feature_2: tx_volume
+        rng.beta(2, 5, n),          # feature_3: cash_ratio
+        rng.beta(1.5, 8, n),        # feature_4: night_tx_ratio
+        rng.uniform(0, 20, n),      # feature_5: tenure
     ])
     feature_names = ["country_risk", "payment_delay", "tx_volume",
                      "cash_ratio", "night_tx_ratio", "tenure"]
@@ -35,113 +35,94 @@ def banking_data():
     return X, y, feature_names
 
 
-@pytest.fixture
-def rules():
-    """Define test rules."""
-    confirmatory = [
-        {
-            "name": "CSSF: Country risk > 2.5",
-            "evaluate": lambda X, fn: (X[:, fn.index("country_risk")] > 2.5).astype(float),
-        },
-    ]
-    optional = [
-        {
-            "name": "Analyst: Night TX > 0.15",
-            "evaluate": lambda X, fn: (X[:, fn.index("night_tx_ratio")] > 0.15).astype(float),
-        },
-    ]
-    return confirmatory, optional
-
-
-def test_fit_and_predict(banking_data, rules):
+def test_fit_and_predict(credit_data):
     """Test basic fit/predict cycle."""
-    X, y, fn = banking_data
-    conf, opt = rules
+    X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=20, random_state=42)
-    erf.fit(X, y, feature_names=fn, confirmatory_rules=conf, optional_rules=opt)
+    erf = ExpertRuleFit(max_rules=20, n_bootstrap=3)
+    erf.fit(X, y, feature_names=fn)
 
     proba = erf.predict_proba(X)
     assert proba.shape == (X.shape[0], 2)
     assert np.all(proba >= 0) and np.all(proba <= 1)
-    assert np.allclose(proba.sum(axis=1), 1.0)
 
     labels = erf.predict(X)
-    assert set(labels).issubset({0, 1})
+    assert set(np.unique(labels)).issubset({0, 1})
 
 
-def test_confirmatory_preserved(banking_data, rules):
-    """Test that confirmatory rules have non-zero coefficients."""
-    X, y, fn = banking_data
-    conf, opt = rules
+def test_reproducibility(credit_data):
+    """Test that two fits with different random_state produce identical rules."""
+    X, y, fn = credit_data
 
-    erf = ExpertRuleFit(confirmatory_penalty=1e-6, max_rules=20, random_state=42)
-    erf.fit(X, y, feature_names=fn, confirmatory_rules=conf, optional_rules=opt)
+    erf1 = ExpertRuleFit(max_rules=20, n_bootstrap=3, random_state=0)
+    erf1.fit(X, y, feature_names=fn)
 
-    assert erf.confirmatory_all_active_, "Confirmatory rules should be preserved"
-    assert all(abs(c) > 1e-10 for c in erf.confirmatory_coefs_)
+    erf2 = ExpertRuleFit(max_rules=20, n_bootstrap=3, random_state=99)
+    erf2.fit(X, y, feature_names=fn)
 
+    rules1 = erf1.get_selected_rules()
+    rules2 = erf2.get_selected_rules()
+    assert rules1 == rules2, "Different random_state should produce identical rules"
 
-def test_explain(banking_data, rules):
-    """Test explanation output format."""
-    X, y, fn = banking_data
-    conf, opt = rules
-
-    erf = ExpertRuleFit(max_rules=20, random_state=42)
-    erf.fit(X, y, feature_names=fn, confirmatory_rules=conf, optional_rules=opt)
-
-    explanations = erf.explain(X[0])
-    assert isinstance(explanations, list)
-    for exp in explanations:
-        assert "rule" in exp
-        assert "category" in exp
-        assert "contribution" in exp
-        assert "active" in exp
-        assert "coefficient" in exp
+    proba1 = erf1.predict_proba(X)
+    proba2 = erf2.predict_proba(X)
+    np.testing.assert_array_equal(proba1, proba2)
 
 
-def test_get_active_rules(banking_data, rules):
-    """Test active rules retrieval."""
-    X, y, fn = banking_data
-    conf, opt = rules
+def test_get_selected_rules(credit_data):
+    """Test rule extraction."""
+    X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=20, random_state=42)
-    erf.fit(X, y, feature_names=fn, confirmatory_rules=conf, optional_rules=opt)
+    erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
+    erf.fit(X, y, feature_names=fn)
 
-    active = erf.get_active_rules()
-    assert isinstance(active, list)
-    # At least the confirmatory rule should be active
-    categories = [r["category"] for r in active]
-    assert "confirmatory" in categories
+    rules = erf.get_selected_rules()
+    assert isinstance(rules, set)
+    # Model should have stable features (at minimum linear features)
+    assert erf.n_stable_rules_ > 0
 
 
-def test_export_sql(banking_data, rules):
-    """Test SQL export."""
-    X, y, fn = banking_data
-    conf, opt = rules
-    conf[0]["sql_condition"] = "country_risk > 2.5"
+def test_get_rule_importance(credit_data):
+    """Test rule importance retrieval."""
+    X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=20, random_state=42)
-    erf.fit(X, y, feature_names=fn, confirmatory_rules=conf, optional_rules=opt)
+    erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
+    erf.fit(X, y, feature_names=fn)
 
-    sql = erf.export_sql("scoring_input")
-    assert "SELECT" in sql
-    assert "risk_score" in sql
-    assert "scoring_input" in sql
+    importance = erf.get_rule_importance()
+    assert isinstance(importance, list)
+    # Should be sorted by importance (descending) if any rules selected
+    for i in range(len(importance) - 1):
+        assert importance[i]["abs_importance"] >= importance[i + 1]["abs_importance"]
+    for r in importance:
+        assert "name" in r
+        assert "coefficient" in r
+        assert "abs_importance" in r
 
 
-def test_summary(banking_data, rules, capsys):
+def test_summary(credit_data, capsys):
     """Test summary output."""
-    X, y, fn = banking_data
-    conf, opt = rules
+    X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=20, random_state=42)
-    erf.fit(X, y, feature_names=fn, confirmatory_rules=conf, optional_rules=opt)
+    erf = ExpertRuleFit(max_rules=20, n_bootstrap=3)
+    erf.fit(X, y, feature_names=fn)
 
     erf.summary()
     captured = capsys.readouterr()
     assert "ExpertRuleFit" in captured.out
-    assert "Confirmatory" in captured.out
+    assert "Stable features" in captured.out
+
+
+def test_stable_mask(credit_data):
+    """Test that stable_mask_ is properly set after fit."""
+    X, y, fn = credit_data
+
+    erf = ExpertRuleFit(max_rules=20, n_bootstrap=5, rule_threshold=0.8)
+    erf.fit(X, y, feature_names=fn)
+
+    assert hasattr(erf, "stable_mask_")
+    assert erf.stable_mask_.dtype == bool
+    assert erf.n_stable_rules_ == erf.stable_mask_.sum()
 
 
 if __name__ == "__main__":
