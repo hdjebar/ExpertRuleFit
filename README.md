@@ -96,6 +96,25 @@ assert erf.confirmatory_all_active_
 
 **Pipeline:** EBM (GA2M) identifies which feature pairs interact → quantile scan finds discriminative thresholds → ExpertRuleFit preserves them with near-zero penalty.
 
+### Dual Model — Full Stacking Architecture (§5 of spec)
+
+```python
+from expertrulefit import DualModel
+
+# EBM (continuous effects) + ExpertRuleFit (discrete rules) → LogisticRegression stacking
+dm = DualModel()
+dm.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
+
+# Meta-classifier combines both scores with interpretable weights
+proba = dm.predict_proba(X_test)[:, 1]
+dm.summary()  # Shows: EBM weight=91%, ERF weight=9%, intercept
+
+# Per-sample explanation: shape functions + active rules + meta-weights
+explanations = dm.explain(X_test[:1])
+```
+
+**Architecture:** `Features → EBM(p_ebm) + ExpertRuleFit(p_erf) → LogisticRegression → final_score`. Every layer is interpretable — no post-hoc approximations. Cross-validated OOF predictions prevent stacking overfitting.
+
 ## Two Guarantees
 
 1. **Reproducibility** — same data → same rules → same predictions (100/100 seeds)
@@ -106,6 +125,7 @@ assert erf.confirmatory_all_active_
 - **100/100 reproducible** — identical rules across 100 random seeds on 3 datasets
 - **Confirmatory rules** — regulatory rules that are never eliminated by regularization
 - **EBM bridge** — auto-discover interactions with InterpretML, inject as confirmatory rules
+- **Dual stacking** — EBM + ExpertRuleFit + LogisticRegression meta-classifier, per-sample explanations
 - **Deterministic by design** — fixed internal seeds, single-threaded BLAS
 - **Interpretable** — rule-based model, transparent by design (EU AI Act Art. 13)
 - **Auditable** — stable output enables consistent regulatory reporting
@@ -116,7 +136,7 @@ assert erf.confirmatory_all_active_
 
 ```bash
 pip install imodels scikit-learn numpy
-pip install interpret  # optional, for EBM bridge
+pip install interpret pandas  # optional, for EBM bridge & DualModel
 ```
 
 Then clone this repo:
@@ -146,12 +166,15 @@ expertrulefit/
     __init__.py              # Package entry point
     expert_rulefit.py        # ExpertRuleFit class
     ebm_bridge.py            # EBM → confirmatory rule extraction
+    dual_model.py            # DualModel: EBM + ExpertRuleFit stacking
 expertrulefit_validation.py  # Full benchmark (3 datasets × 100 seeds)
 examples/
     quick_demo.py            # Quick 10-seed reproducibility demo
     ebm_pipeline.py          # EBM → ExpertRuleFit pipeline demo
+    dual_model_demo.py       # Full dual architecture demo
 tests/
-    test_expert_rulefit.py   # Unit tests (9 tests)
+    test_expert_rulefit.py   # ExpertRuleFit tests (9 tests)
+    test_dual_model.py       # DualModel tests (4 tests)
 output/                      # Benchmark results (figures, CSVs, report)
 ```
 
