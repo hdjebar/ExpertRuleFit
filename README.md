@@ -80,6 +80,22 @@ erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 
 **How it works:** confirmatory rules get near-zero regularization penalty (1e-8 vs 1.0), making it mathematically impossible for Elastic Net to eliminate them. This is implemented via feature scaling: `X_j * 1/sqrt(w_j)` where `w_j ~ 0`.
 
+### With EBM-Discovered Interactions (automated pipeline)
+
+```python
+from expertrulefit import ExpertRuleFit, discover_interaction_rules
+
+# EBM discovers which feature pairs interact, then finds optimal thresholds
+rules, ebm = discover_interaction_rules(X_train, y_train, feature_names, top_k=3)
+
+# Feed EBM interactions as confirmatory rules → guaranteed to survive
+erf = ExpertRuleFit(max_rules=50)
+erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=rules)
+assert erf.confirmatory_all_active_
+```
+
+**Pipeline:** EBM (GA2M) identifies which feature pairs interact → quantile scan finds discriminative thresholds → ExpertRuleFit preserves them with near-zero penalty.
+
 ## Two Guarantees
 
 1. **Reproducibility** — same data → same rules → same predictions (100/100 seeds)
@@ -89,6 +105,7 @@ erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 
 - **100/100 reproducible** — identical rules across 100 random seeds on 3 datasets
 - **Confirmatory rules** — regulatory rules that are never eliminated by regularization
+- **EBM bridge** — auto-discover interactions with InterpretML, inject as confirmatory rules
 - **Deterministic by design** — fixed internal seeds, single-threaded BLAS
 - **Interpretable** — rule-based model, transparent by design (EU AI Act Art. 13)
 - **Auditable** — stable output enables consistent regulatory reporting
@@ -99,6 +116,7 @@ erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 
 ```bash
 pip install imodels scikit-learn numpy
+pip install interpret  # optional, for EBM bridge
 ```
 
 Then clone this repo:
@@ -127,11 +145,13 @@ Output goes to `output/` with:
 expertrulefit/
     __init__.py              # Package entry point
     expert_rulefit.py        # ExpertRuleFit class
+    ebm_bridge.py            # EBM → confirmatory rule extraction
 expertrulefit_validation.py  # Full benchmark (3 datasets × 100 seeds)
 examples/
     quick_demo.py            # Quick 10-seed reproducibility demo
+    ebm_pipeline.py          # EBM → ExpertRuleFit pipeline demo
 tests/
-    test_expert_rulefit.py   # Unit tests
+    test_expert_rulefit.py   # Unit tests (9 tests)
 output/                      # Benchmark results (figures, CSVs, report)
 ```
 
@@ -175,6 +195,7 @@ that makes standard RuleFit non-reproducible.
 2. Zou & Hastie (2005) — *Regularization and variable selection via the elastic net*, JRSS-B
 3. Singh et al. (2021) — *imodels: a python package for fitting interpretable models*, JOSS
 4. Zou (2006) — *The Adaptive LASSO and Its Oracle Properties*, JASA
+5. Nori et al. (2019) — *InterpretML: A Unified Framework for Machine Learning Interpretability*, arXiv:1909.09223
 
 ## License
 
