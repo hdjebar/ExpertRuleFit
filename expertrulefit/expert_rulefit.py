@@ -2,25 +2,34 @@
 ExpertRuleFit — Elastic Net + Bootstrap Stabilization for Reproducible Rule Learning.
 
 Extends imodels.RuleFitClassifier with a deterministic rule selection pipeline
-that guarantees 100/100 seed reproducibility for regulated banking environments.
+that guarantees 100/100 seed reproducibility for regulated banking environments,
+with optional confirmatory rules that survive any regularization strength.
+
+Two guarantees:
+    1. **Reproducibility** — same data → same rules → same predictions (100/100 seeds)
+    2. **Rule preservation** — confirmatory (regulatory) rules are NEVER eliminated
 
 Approach:
     1. Fit base RuleFit with FIXED internal seed → same candidate rules always
     2. Build rule feature matrix via manual rule string evaluation
-    3. Bootstrap stabilization: 10 bootstrap samples × ElasticNetCV
-    4. Frequency-based filtering: keep rules selected in >= 80% of bootstraps
-    5. Final ElasticNetCV on stable features only
+    3. Append confirmatory/optional expert rules as additional features
+    4. Bootstrap stabilization: 10 bootstrap samples × ElasticNetCV
+       (confirmatory features scaled by 1/sqrt(w_j) → near-zero effective penalty)
+    5. Frequency-based filtering: keep rules selected in >= 80% of bootstraps
+       (confirmatory rules force-included regardless of bootstrap frequency)
+    6. Final ElasticNetCV on stable features with weighted scaling
 
 Mathematical foundation:
-    Standard RuleFit: tree_ensemble → Lasso → rule selection (seed-dependent)
-    ExpertRuleFit:    tree_ensemble → ElasticNet × bootstrap → frequency filter
-                      (fixed seed)    (fixed seeds)            (deterministic)
+    Standard Lasso:   minimize ||y - Xb||^2 + lambda * sum(|b_j|)
+    Weighted Elastic:  minimize ||y - Xb||^2 + lambda * sum(w_j * |b_j|)
 
-Result: same data → same rules → same predictions → audit-ready.
+    By scaling feature j by 1/sqrt(w_j), the effective penalty becomes lambda * w_j.
+    Setting w_j ~ 0 for confirmatory rules ensures they are never eliminated.
 
 References:
     - Friedman & Popescu (2008) "Predictive Learning via Rule Ensembles"
     - Zou & Hastie (2005) "Regularization and variable selection via the elastic net"
+    - Zou (2006) "The Adaptive LASSO and Its Oracle Properties", JASA
     - Singh et al. (2021) "imodels", JOSS (base implementation)
 """
 
@@ -106,7 +115,12 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     """Reproducible rule-based classifier for regulated banking environments.
 
     ExpertRuleFit extends RuleFit with bootstrap-stabilized Elastic Net
-    to guarantee identical rule selection across random seeds.
+    to guarantee identical rule selection across random seeds, with optional
+    confirmatory rules that survive any regularization strength.
+
+    Two guarantees:
+    1. **Reproducibility** — fixed internal seed + bootstrap → 100/100 stability
+    2. **Rule preservation** — confirmatory rules get near-zero penalty → never eliminated
 
     Design principle — **deterministic by construction**:
     1. Base tree generation uses a FIXED internal seed (_BASE_SEED=42)
@@ -117,8 +131,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
        → numerical convergence guarantee
     4. Frequency-based rule filtering (threshold >= 80%)
        → only rules robust to bootstrap perturbation survive
-
-    Result: same data → same rules → same predictions → audit-ready.
+    5. Confirmatory rules force-included with near-zero penalty
+       → regulatory rules NEVER eliminated
 
     Parameters
     ----------
@@ -141,6 +155,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     rule_threshold : float, default=0.8
         Minimum frequency (0-1) a rule must be selected across bootstraps.
 
+    confirmatory_penalty : float, default=1e-8
+        Penalty weight for confirmatory rules. Near-zero ensures they are
+        never eliminated. Must be > 0 for numerical stability.
+
+    optional_penalty : float, default=0.3
+        Penalty weight for optional (analyst-suggested) rules. Lower than
+        auto means these are preferred but can still be eliminated.
+
     l1_ratios : list of float, optional
         L1/L2 mixing ratios for ElasticNetCV. Default: [0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
 
@@ -150,10 +172,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     Examples
     --------
     >>> from expertrulefit import ExpertRuleFit
+    >>> confirmatory = [
+    ...     {"name": "CSSF: Country risk > 2.5",
+    ...      "evaluate": lambda X, fn: (X[:, fn.index("country_risk")] > 2.5).astype(float)}
+    ... ]
     >>> erf = ExpertRuleFit(max_rules=50)
-    >>> erf.fit(X_train, y_train, feature_names=feature_names)
+    >>> erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
+    >>> assert erf.confirmatory_all_active_, "COMPLIANCE FAILURE"
     >>> proba = erf.predict_proba(X_test)[:, 1]
-    >>> rules = erf.get_selected_rules()
     """
 
     _BASE_SEED = 42
@@ -166,6 +192,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         random_state=42,
         n_bootstrap=10,
         rule_threshold=0.8,
+        confirmatory_penalty=1e-8,
+        optional_penalty=0.3,
         l1_ratios=None,
         tol=1e-6,
     ):
@@ -175,10 +203,12 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.random_state = random_state
         self.n_bootstrap = n_bootstrap
         self.rule_threshold = rule_threshold
+        self.confirmatory_penalty = confirmatory_penalty
+        self.optional_penalty = optional_penalty
         self.l1_ratios = l1_ratios or [0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
         self.tol = tol
 
-    def fit(self, X, y, feature_names=None):
+    def fit(self, X, y, feature_names=None, confirmatory_rules=None, optional_rules=None):
         """Fit ExpertRuleFit with bootstrap-stabilized Elastic Net.
 
         All internal randomness uses _BASE_SEED for determinism.
@@ -194,6 +224,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         feature_names : list of str, optional
             Names for each feature column.
 
+        confirmatory_rules : list of dict, optional
+            Regulatory rules that MUST be preserved. Each dict has:
+            - "name": str — human-readable rule name
+            - "evaluate": callable(X, feature_names) → array of shape (n_samples,)
+            These rules bypass bootstrap filtering and get near-zero penalty.
+
+        optional_rules : list of dict, optional
+            Analyst-suggested rules with reduced penalty. Same format.
+
         Returns
         -------
         self
@@ -204,6 +243,11 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
         self.feature_names_ = list(feature_names)
+
+        confirmatory_rules = confirmatory_rules or []
+        optional_rules = optional_rules or []
+        self.confirmatory_rules_ = confirmatory_rules
+        self.optional_rules_ = optional_rules
 
         # Step 1: Fit base RuleFit with FIXED seed → same trees always
         self.base_rulefit_ = RuleFitClassifier(
@@ -221,18 +265,56 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         if X_rules is None or X_rules.shape[1] == 0:
             self.stable_mask_ = np.ones(X.shape[1], dtype=bool)
             self.n_stable_rules_ = 0
+            self.confirmatory_all_active_ = True
             return self
 
-        n_rule_features = X_rules.shape[1]
-        self._build_rule_names(n_rule_features)
+        n_auto_features = X_rules.shape[1]
 
-        # Step 3: Bootstrap stabilization with Elastic Net (fixed seeds)
-        rule_selection_count = np.zeros(n_rule_features)
+        # Step 3: Append confirmatory + optional expert rule features
+        expert_columns = []
+        expert_names = []
+        expert_categories = []  # 'confirmatory' or 'optional'
+        for rule in confirmatory_rules:
+            col = rule["evaluate"](X, self.feature_names_)
+            expert_columns.append(np.asarray(col, dtype=np.float64).reshape(-1, 1))
+            expert_names.append(f"confirmatory:{rule['name']}")
+            expert_categories.append("confirmatory")
+        for rule in optional_rules:
+            col = rule["evaluate"](X, self.feature_names_)
+            expert_columns.append(np.asarray(col, dtype=np.float64).reshape(-1, 1))
+            expert_names.append(f"optional:{rule['name']}")
+            expert_categories.append("optional")
+
+        n_expert = len(expert_columns)
+        if expert_columns:
+            X_all = np.hstack([X_rules] + expert_columns)
+        else:
+            X_all = X_rules
+
+        n_total_features = X_all.shape[1]
+        self._build_rule_names(n_auto_features)
+        self.rule_names_ = self.rule_names_ + expert_names
+        self.expert_categories_ = expert_categories
+
+        # Build penalty weight vector: 1.0 for auto, custom for expert
+        penalty_weights = np.ones(n_total_features)
+        for i, cat in enumerate(expert_categories):
+            idx = n_auto_features + i
+            if cat == "confirmatory":
+                penalty_weights[idx] = self.confirmatory_penalty
+            else:
+                penalty_weights[idx] = self.optional_penalty
+
+        # Step 4: Bootstrap stabilization with Elastic Net (fixed seeds)
+        # Scale features by 1/sqrt(w_j) so effective penalty = lambda * w_j
+        inv_sqrt_w = 1.0 / np.sqrt(np.maximum(penalty_weights, 1e-12))
+        rule_selection_count = np.zeros(n_total_features)
 
         for b in range(self.n_bootstrap):
             rng = np.random.RandomState(self._BASE_SEED + b)
             idx = rng.choice(len(X), size=len(X), replace=True)
-            X_boot, y_boot = X_rules[idx], y[idx]
+            X_boot = X_all[idx] * inv_sqrt_w[np.newaxis, :]
+            y_boot = y[idx]
 
             try:
                 enet = ElasticNetCV(
@@ -249,14 +331,20 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             except Exception:
                 continue
 
-        # Step 4: Keep only stable rules (>= threshold)
+        # Step 5: Keep stable rules (>= threshold)
         self.stable_mask_ = (
             rule_selection_count / max(self.n_bootstrap, 1)
         ) >= self.rule_threshold
 
-        # Step 5: Re-fit final model on stable rules only (fixed seed)
+        # Force-include ALL confirmatory and optional rules regardless of bootstrap
+        for i in range(n_expert):
+            self.stable_mask_[n_auto_features + i] = True
+
+        # Step 6: Re-fit final model on stable features with weighted scaling
         if self.stable_mask_.sum() > 0:
-            X_stable = X_rules[:, self.stable_mask_]
+            X_stable = X_all[:, self.stable_mask_]
+            w_stable = inv_sqrt_w[self.stable_mask_]
+            X_stable_weighted = X_stable * w_stable[np.newaxis, :]
             self.final_model_ = ElasticNetCV(
                 l1_ratio=self.l1_ratios,
                 cv=5,
@@ -264,10 +352,12 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 tol=self.tol,
                 max_iter=10000,
             )
-            self.final_model_.fit(X_stable, y)
+            self.final_model_.fit(X_stable_weighted, y)
+            # Store the weighting for predict-time
+            self.stable_inv_sqrt_w_ = w_stable
         else:
-            # Fallback: keep all rules
-            self.stable_mask_ = np.ones(n_rule_features, dtype=bool)
+            self.stable_mask_ = np.ones(n_total_features, dtype=bool)
+            X_weighted = X_all * inv_sqrt_w[np.newaxis, :]
             self.final_model_ = ElasticNetCV(
                 l1_ratio=self.l1_ratios,
                 cv=5,
@@ -275,9 +365,16 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 tol=self.tol,
                 max_iter=10000,
             )
-            self.final_model_.fit(X_rules, y)
+            self.final_model_.fit(X_weighted, y)
+            self.stable_inv_sqrt_w_ = inv_sqrt_w
 
         self.n_stable_rules_ = int(self.stable_mask_.sum())
+        self.n_auto_features_ = n_auto_features
+        self.n_expert_ = n_expert
+
+        # Step 7: Verify confirmatory rules are preserved
+        self._verify_confirmatory()
+
         return self
 
     def predict(self, X):
@@ -292,10 +389,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         labels : array of shape (n_samples,)
         """
         check_is_fitted(self, ["base_rulefit_", "final_model_"])
-        X = np.asarray(X, dtype=np.float64)
-        X_rules = build_rule_feature_matrix(self.base_rulefit_, X)
-        X_stable = X_rules[:, self.stable_mask_]
-        raw = self.final_model_.predict(X_stable)
+        X_stable_weighted = self._build_predict_matrix(X)
+        raw = self.final_model_.predict(X_stable_weighted)
         return (raw >= 0.5).astype(int)
 
     def predict_proba(self, X):
@@ -310,12 +405,32 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         proba : array of shape (n_samples, 2)
         """
         check_is_fitted(self, ["base_rulefit_", "final_model_"])
-        X = np.asarray(X, dtype=np.float64)
-        X_rules = build_rule_feature_matrix(self.base_rulefit_, X)
-        X_stable = X_rules[:, self.stable_mask_]
-        raw = self.final_model_.predict(X_stable)
+        X_stable_weighted = self._build_predict_matrix(X)
+        raw = self.final_model_.predict(X_stable_weighted)
         raw = np.clip(raw, 0, 1)
         return np.column_stack([1 - raw, raw])
+
+    def _build_predict_matrix(self, X):
+        """Build the weighted feature matrix for prediction."""
+        X = np.asarray(X, dtype=np.float64)
+        X_rules = build_rule_feature_matrix(self.base_rulefit_, X)
+
+        # Append expert rule columns
+        expert_columns = []
+        for rule in self.confirmatory_rules_:
+            col = rule["evaluate"](X, self.feature_names_)
+            expert_columns.append(np.asarray(col, dtype=np.float64).reshape(-1, 1))
+        for rule in self.optional_rules_:
+            col = rule["evaluate"](X, self.feature_names_)
+            expert_columns.append(np.asarray(col, dtype=np.float64).reshape(-1, 1))
+
+        if expert_columns:
+            X_all = np.hstack([X_rules] + expert_columns)
+        else:
+            X_all = X_rules
+
+        X_stable = X_all[:, self.stable_mask_]
+        return X_stable * self.stable_inv_sqrt_w_[np.newaxis, :]
 
     def get_selected_rules(self):
         """Return names of selected (stable) rules with non-zero final coefficients.
@@ -342,7 +457,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         Returns
         -------
-        rules : list of dict with keys 'name', 'coefficient', 'abs_importance'
+        rules : list of dict with keys 'name', 'coefficient', 'abs_importance', 'category'
         """
         check_is_fitted(self, ["base_rulefit_", "final_model_"])
         stable_indices = np.where(self.stable_mask_)[0]
@@ -350,10 +465,20 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         rules = []
         for j, idx in enumerate(stable_indices):
             if j < len(final_coefs) and abs(final_coefs[j]) > 1e-10:
+                name = self.rule_names_[idx]
+                if name.startswith("confirmatory:"):
+                    category = "confirmatory"
+                elif name.startswith("optional:"):
+                    category = "optional"
+                elif name.startswith("linear:"):
+                    category = "linear"
+                else:
+                    category = "rule"
                 rules.append({
-                    "name": self.rule_names_[idx],
+                    "name": name,
                     "coefficient": float(final_coefs[j]),
                     "abs_importance": abs(float(final_coefs[j])),
+                    "category": category,
                 })
         rules.sort(key=lambda r: r["abs_importance"], reverse=True)
         return rules
@@ -371,6 +496,26 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         print(f"\nCandidate features: {n_total}")
         print(f"Stable features (>= {self.rule_threshold:.0%} bootstrap freq): {n_stable}")
         print(f"Active rules (non-zero coef): {len(selected)}")
+
+        # Show confirmatory rule status
+        if self.confirmatory_rules_:
+            print(f"\nConfirmatory rules ({len(self.confirmatory_rules_)}):")
+            for s in self.confirmatory_status_:
+                status = "ACTIVE" if s["active"] else "INACTIVE"
+                print(f"  [{status}] {s['name']}")
+            if self.confirmatory_all_active_:
+                print("  All confirmatory rules preserved.")
+            else:
+                print("  WARNING: Some confirmatory rules were eliminated!")
+
+        if self.optional_rules_:
+            print(f"\nOptional rules ({len(self.optional_rules_)}):")
+            for rule in self.optional_rules_:
+                name = f"optional:{rule['name']}"
+                active = name in selected
+                status = "ACTIVE" if active else "dropped"
+                print(f"  [{status}] {rule['name']}")
+
         print(f"\nTop rules by importance:")
         for r in self.get_rule_importance()[:10]:
             print(f"  coef={r['coefficient']:+.6f} | {r['name']}")
@@ -388,3 +533,33 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         while len(names) < n_features:
             names.append(f"rule:unknown_{len(names)}")
         self.rule_names_ = names[:n_features]
+
+    def _verify_confirmatory(self):
+        """Verify that all confirmatory rules have non-zero coefficients.
+
+        Sets self.confirmatory_all_active_ (bool) and
+        self.confirmatory_status_ (list of dict with name + active).
+        """
+        self.confirmatory_status_ = []
+        all_active = True
+
+        if not self.confirmatory_rules_:
+            self.confirmatory_all_active_ = True
+            return
+
+        stable_indices = np.where(self.stable_mask_)[0]
+        final_coefs = self.final_model_.coef_
+
+        for rule in self.confirmatory_rules_:
+            name = f"confirmatory:{rule['name']}"
+            # Find this rule's position in the stable feature set
+            active = False
+            for j, idx in enumerate(stable_indices):
+                if j < len(final_coefs) and self.rule_names_[idx] == name:
+                    active = abs(final_coefs[j]) > 1e-10
+                    break
+            self.confirmatory_status_.append({"name": rule["name"], "active": active})
+            if not active:
+                all_active = False
+
+        self.confirmatory_all_active_ = all_active

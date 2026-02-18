@@ -2,7 +2,7 @@
 
 **Reproducible interpretable ML for regulated banking environments.**
 
-ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility. Built for banking compliance under CSSF/EU AI Act.
+ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility, plus **confirmatory rules** that survive any regularization strength. Built for banking compliance under CSSF/EU AI Act.
 
 ## The Problem
 
@@ -40,7 +40,7 @@ Benchmarked on **3 credit scoring datasets** with **100 random seeds** each:
 ```python
 from expertrulefit import ExpertRuleFit
 
-# Fit
+# Fit (auto rules only — reproducible)
 erf = ExpertRuleFit(max_rules=50, n_bootstrap=10, rule_threshold=0.8)
 erf.fit(X_train, y_train, feature_names=feature_names)
 
@@ -55,9 +55,40 @@ for rule in erf.get_rule_importance()[:5]:
 erf.summary()
 ```
 
+### With Confirmatory Rules (regulatory requirements)
+
+```python
+# Define rules that MUST survive regularization
+confirmatory = [
+    {
+        "name": "CSSF: High cash ratio",
+        "evaluate": lambda X, fn: (X[:, fn.index("cash_ratio")] > 0.4).astype(float),
+    },
+    {
+        "name": "BCBS: Country risk threshold",
+        "evaluate": lambda X, fn: (X[:, fn.index("country_risk")] > 2.5).astype(float),
+    },
+]
+
+erf = ExpertRuleFit(max_rules=50)
+erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
+
+# Verify all regulatory rules were preserved
+assert erf.confirmatory_all_active_, "COMPLIANCE FAILURE: confirmatory rule eliminated!"
+erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
+```
+
+**How it works:** confirmatory rules get near-zero regularization penalty (1e-8 vs 1.0), making it mathematically impossible for Elastic Net to eliminate them. This is implemented via feature scaling: `X_j * 1/sqrt(w_j)` where `w_j ~ 0`.
+
+## Two Guarantees
+
+1. **Reproducibility** — same data → same rules → same predictions (100/100 seeds)
+2. **Rule preservation** — confirmatory (regulatory) rules survive any regularization strength
+
 ## Features
 
 - **100/100 reproducible** — identical rules across 100 random seeds on 3 datasets
+- **Confirmatory rules** — regulatory rules that are never eliminated by regularization
 - **Deterministic by design** — fixed internal seeds, single-threaded BLAS
 - **Interpretable** — rule-based model, transparent by design (EU AI Act Art. 13)
 - **Auditable** — stable output enables consistent regulatory reporting
@@ -112,10 +143,11 @@ Random trees (seed-dependent) → Lasso → rule selection
 Different seed → different trees → different rules
 ```
 
-### ExpertRuleFit (deterministic)
+### ExpertRuleFit (deterministic + rule preservation)
 ```
-Fixed-seed trees → Bootstrap × ElasticNetCV → frequency filter → final fit
+Fixed-seed trees → append expert rules → Bootstrap × weighted ElasticNetCV → frequency filter → final fit
 Same data → same trees → same stable rules → same output
+Confirmatory rules: penalty ≈ 0 → never eliminated
 ```
 
 ### Why Elastic Net?

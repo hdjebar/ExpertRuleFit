@@ -125,5 +125,78 @@ def test_stable_mask(credit_data):
     assert erf.n_stable_rules_ == erf.stable_mask_.sum()
 
 
+def test_confirmatory_rules_preserved(credit_data):
+    """Test that confirmatory rules survive regularization."""
+    X, y, fn = credit_data
+
+    confirmatory = [
+        {
+            "name": "High cash ratio",
+            "evaluate": lambda X, fn: (X[:, fn.index("cash_ratio")] > 0.4).astype(float),
+        },
+    ]
+
+    erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
+    erf.fit(X, y, feature_names=fn, confirmatory_rules=confirmatory)
+
+    # Confirmatory rule must be in the stable set
+    assert erf.confirmatory_all_active_, "Confirmatory rule was eliminated!"
+
+    # Check it appears in selected rules
+    selected = erf.get_selected_rules()
+    assert any("confirmatory:" in r for r in selected)
+
+    # Check it appears in importance with correct category
+    importance = erf.get_rule_importance()
+    confirmatory_entries = [r for r in importance if r["category"] == "confirmatory"]
+    assert len(confirmatory_entries) >= 1
+
+    # Verify prediction still works
+    proba = erf.predict_proba(X)
+    assert proba.shape == (X.shape[0], 2)
+
+
+def test_confirmatory_summary(credit_data, capsys):
+    """Test that summary shows confirmatory rule status."""
+    X, y, fn = credit_data
+
+    confirmatory = [
+        {
+            "name": "High cash ratio",
+            "evaluate": lambda X, fn: (X[:, fn.index("cash_ratio")] > 0.4).astype(float),
+        },
+    ]
+
+    erf = ExpertRuleFit(max_rules=20, n_bootstrap=3)
+    erf.fit(X, y, feature_names=fn, confirmatory_rules=confirmatory)
+
+    erf.summary()
+    captured = capsys.readouterr()
+    assert "Confirmatory rules" in captured.out
+    assert "High cash ratio" in captured.out
+
+
+def test_optional_rules(credit_data):
+    """Test that optional rules are supported but can be eliminated."""
+    X, y, fn = credit_data
+
+    optional = [
+        {
+            "name": "Night transactions",
+            "evaluate": lambda X, fn: (X[:, fn.index("night_tx_ratio")] > 0.15).astype(float),
+        },
+    ]
+
+    erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
+    erf.fit(X, y, feature_names=fn, optional_rules=optional)
+
+    # Optional rule should be in stable mask (force-included)
+    assert hasattr(erf, "n_expert_")
+    assert erf.n_expert_ == 1
+
+    proba = erf.predict_proba(X)
+    assert proba.shape == (X.shape[0], 2)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
