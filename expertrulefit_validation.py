@@ -31,15 +31,12 @@ import time
 import hashlib
 import logging
 from datetime import datetime
-from itertools import combinations
-
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OrdinalEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
-from sklearn.linear_model import ElasticNetCV
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
@@ -83,112 +80,18 @@ log = logging.getLogger(__name__)
 
 
 # ============================================================
-# RULE EVALUATION HELPER
+# REUSE PACKAGE IMPLEMENTATIONS (avoid code duplication)
 # ============================================================
-def eval_rule_on_data(rule_str, X):
-    """Evaluate a rule string (X_i notation) on data matrix X.
-
-    Rule strings look like: 'X_1 > -0.06917 and X_5 <= 0.41409'
-    Returns a binary float array (0.0 or 1.0) of shape (n_samples,).
-    """
-    n = X.shape[0]
-    result = np.ones(n, dtype=bool)
-    conditions = rule_str.split(" and ")
-    for cond in conditions:
-        cond = cond.strip()
-        if "<=" in cond:
-            parts = cond.split("<=")
-            col_idx = int(parts[0].strip().split("_")[1])
-            val = float(parts[1].strip())
-            if col_idx < X.shape[1]:
-                result &= X[:, col_idx] <= val
-            else:
-                result[:] = False
-        elif ">=" in cond:
-            parts = cond.split(">=")
-            col_idx = int(parts[0].strip().split("_")[1])
-            val = float(parts[1].strip())
-            if col_idx < X.shape[1]:
-                result &= X[:, col_idx] >= val
-            else:
-                result[:] = False
-        elif ">" in cond:
-            parts = cond.split(">")
-            col_idx = int(parts[0].strip().split("_")[1])
-            val = float(parts[1].strip())
-            if col_idx < X.shape[1]:
-                result &= X[:, col_idx] > val
-            else:
-                result[:] = False
-        elif "<" in cond:
-            parts = cond.split("<")
-            col_idx = int(parts[0].strip().split("_")[1])
-            val = float(parts[1].strip())
-            if col_idx < X.shape[1]:
-                result &= X[:, col_idx] < val
-            else:
-                result[:] = False
-    return result.astype(np.float64)
+from expertrulefit.expert_rulefit import eval_rule_on_data, build_rule_feature_matrix
+from expertrulefit import ExpertRuleFit
 
 
-def build_rule_feature_matrix(rulefit_model, X):
-    """Build the full rule feature matrix from a fitted RuleFitClassifier.
-
-    Columns: [linear features (X columns)] + [rule features (0/1 per rule)]
-    This replicates what transform() should do but using manual rule evaluation.
-    """
-    X = np.asarray(X, dtype=np.float64)
-    n_features = X.shape[1]
-    rules_no_fn = rulefit_model.rules_without_feature_names_
-
-    if not rules_no_fn:
-        return X.copy()
-
-    n_rules = len(rules_no_fn)
-    X_augmented = np.zeros((X.shape[0], n_features + n_rules))
-    # Linear features
-    X_augmented[:, :n_features] = X
-    # Rule features
-    for i, rule in enumerate(rules_no_fn):
-        try:
-            X_augmented[:, n_features + i] = eval_rule_on_data(rule.rule, X)
-        except Exception:
-            pass  # leave as zeros
-
-    return X_augmented
-
-
-# ============================================================
-# ExpertRuleFitClassifier — Elastic Net + Bootstrap Stabilization
-# ============================================================
 class ExpertRuleFitClassifier:
+    """Thin wrapper around ExpertRuleFit for validation benchmark compatibility.
+
+    Delegates to the canonical ExpertRuleFit implementation to avoid code
+    duplication. Accepts the same parameters and adds get_selected_rules().
     """
-    Extension of RuleFit that replaces Lasso with stabilized Elastic Net.
-
-    Goal: 100/100 seed reproducibility for production banking deployment.
-
-    Design principle — **deterministic by construction**:
-    1. Base tree generation uses a FIXED internal seed (base_seed=42)
-       → same candidate rules regardless of external random_state
-    2. Bootstrap sampling uses fixed seeds (base_seed + 0..N)
-       → reproducible bootstrap procedure
-    3. ElasticNetCV with tight tolerance (tol=1e-6)
-       → numerical convergence guarantee
-    4. Frequency-based rule filtering (threshold >= 80%)
-       → only rules robust to bootstrap perturbation survive
-
-    Result: the model is deterministic by design. Any random_state
-    produces the same rules on the same data. This is the regulatory
-    requirement — same data → same rules → same audit trail.
-
-    References:
-        - Friedman & Popescu (2008) "Predictive Learning via Rule Ensembles"
-        - Zou & Hastie (2005) "Regularization and variable selection via the elastic net"
-        - Zou (2006) "The Adaptive LASSO and Its Oracle Properties"
-    """
-
-    # Fixed internal seed for deterministic behavior
-    _BASE_SEED = 42
 
     def __init__(
         self,
@@ -201,154 +104,29 @@ class ExpertRuleFitClassifier:
         l1_ratios=None,
         tol=1e-6,
     ):
-        self.n_estimators = n_estimators
-        self.tree_size = tree_size
-        self.max_rules = max_rules
-        self.random_state = random_state  # accepted but overridden internally
-        self.n_bootstrap = n_bootstrap
-        self.rule_threshold = rule_threshold
-        self.l1_ratios = l1_ratios or [0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
-        self.tol = tol
-
-        self.base_rulefit_ = None
-        self.stable_mask_ = None
-        self.final_model_ = None
-        self.rules_ = None
-        self.rule_names_ = None
-        self.feature_names_ = None
+        self._model = ExpertRuleFit(
+            n_estimators=n_estimators,
+            tree_size=tree_size,
+            max_rules=max_rules,
+            random_state=random_state,
+            n_bootstrap=n_bootstrap,
+            rule_threshold=rule_threshold,
+            l1_ratios=l1_ratios,
+            tol=tol,
+        )
 
     def fit(self, X, y, feature_names=None):
-        """Fit ExpertRuleFit with bootstrap-stabilized Elastic Net.
-
-        All internal randomness uses _BASE_SEED for determinism.
-        """
-        X = np.asarray(X, dtype=np.float64)
-        y = np.asarray(y, dtype=np.float64).ravel()
-
-        if feature_names is None:
-            feature_names = [f"feature_{i}" for i in range(X.shape[1])]
-        self.feature_names_ = list(feature_names)
-
-        # Step 1: Fit base RuleFit with FIXED seed → same trees always
-        self.base_rulefit_ = RuleFitClassifier(
-            n_estimators=self.n_estimators,
-            tree_size=self.tree_size,
-            max_rules=self.max_rules,
-            random_state=self._BASE_SEED,
-            include_linear=True,
-        )
-        self.base_rulefit_.fit(X, y, feature_names=self.feature_names_)
-
-        # Step 2: Build rule feature matrix manually (transform() is broken)
-        X_rules = build_rule_feature_matrix(self.base_rulefit_, X)
-
-        if X_rules is None or X_rules.shape[1] == 0:
-            self.stable_mask_ = np.ones(X.shape[1], dtype=bool)
-            return self
-
-        n_rule_features = X_rules.shape[1]
-
-        # Build rule names
-        self._build_rule_names(n_rule_features)
-
-        # Step 3: Bootstrap stabilization with Elastic Net (fixed seeds)
-        rule_selection_count = np.zeros(n_rule_features)
-
-        for b in range(self.n_bootstrap):
-            rng = np.random.RandomState(self._BASE_SEED + b)
-            idx = rng.choice(len(X), size=len(X), replace=True)
-            X_boot, y_boot = X_rules[idx], y[idx]
-
-            try:
-                enet = ElasticNetCV(
-                    l1_ratio=self.l1_ratios,
-                    cv=5,
-                    random_state=self._BASE_SEED,
-                    tol=self.tol,
-                    max_iter=10000,
-                    selection="random",
-                )
-                enet.fit(X_boot, y_boot)
-
-                selected = np.abs(enet.coef_) > 1e-10
-                rule_selection_count += selected.astype(int)
-            except Exception:
-                continue
-
-        # Step 4: Keep only stable rules (>= threshold)
-        self.stable_mask_ = (
-            rule_selection_count / max(self.n_bootstrap, 1)
-        ) >= self.rule_threshold
-
-        # Step 5: Re-fit final model on stable rules only (fixed seed)
-        if self.stable_mask_.sum() > 0:
-            X_stable = X_rules[:, self.stable_mask_]
-            self.final_model_ = ElasticNetCV(
-                l1_ratio=self.l1_ratios,
-                cv=5,
-                random_state=self._BASE_SEED,
-                tol=self.tol,
-                max_iter=10000,
-            )
-            self.final_model_.fit(X_stable, y)
-        else:
-            # Fallback: keep all rules
-            self.stable_mask_ = np.ones(n_rule_features, dtype=bool)
-            self.final_model_ = ElasticNetCV(
-                l1_ratio=self.l1_ratios,
-                cv=5,
-                random_state=self._BASE_SEED,
-                tol=self.tol,
-                max_iter=10000,
-            )
-            self.final_model_.fit(X_rules, y)
-
+        self._model.fit(X, y, feature_names=feature_names)
         return self
 
     def predict(self, X):
-        X = np.asarray(X, dtype=np.float64)
-        X_rules = build_rule_feature_matrix(self.base_rulefit_, X)
-        X_stable = X_rules[:, self.stable_mask_]
-        raw = self.final_model_.predict(X_stable)
-        return (raw >= 0.5).astype(int)
+        return self._model.predict(X)
 
     def predict_proba(self, X):
-        X = np.asarray(X, dtype=np.float64)
-        X_rules = build_rule_feature_matrix(self.base_rulefit_, X)
-        X_stable = X_rules[:, self.stable_mask_]
-        raw = self.final_model_.predict(X_stable)
-        raw = np.clip(raw, 0, 1)
-        return np.column_stack([1 - raw, raw])
+        return self._model.predict_proba(X)
 
     def get_selected_rules(self):
-        """Return names of selected (stable) rules with non-zero final coefs."""
-        if self.rule_names_ is None or self.stable_mask_ is None:
-            return set()
-        stable_indices = np.where(self.stable_mask_)[0]
-        if self.final_model_ is not None:
-            final_coefs = self.final_model_.coef_
-            active = set()
-            for j, idx in enumerate(stable_indices):
-                if j < len(final_coefs) and abs(final_coefs[j]) > 1e-10:
-                    active.add(self.rule_names_[idx])
-            return active
-        return {self.rule_names_[i] for i in stable_indices}
-
-    def _build_rule_names(self, n_features):
-        """Build human-readable names for all rule features."""
-        names = []
-        # Linear features come first
-        for fn in self.feature_names_:
-            names.append(f"linear:{fn}")
-        # Then rule features
-        if hasattr(self.base_rulefit_, "rules_") and self.base_rulefit_.rules_ is not None:
-            for rule in self.base_rulefit_.rules_:
-                rule_str = str(rule)
-                names.append(f"rule:{rule_str[:60]}")
-        # Pad if needed
-        while len(names) < n_features:
-            names.append(f"rule:unknown_{len(names)}")
-        self.rule_names_ = names[:n_features]
+        return self._model.get_selected_rules()
 
 
 # ============================================================
