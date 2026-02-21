@@ -33,11 +33,26 @@ References:
     - Singh et al. (2021) "imodels", JOSS (base implementation)
 """
 
+import re
+
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.utils.validation import check_is_fitted
 from sklearn.linear_model import ElasticNetCV
 from imodels import RuleFitClassifier
+
+# Pre-compiled regex for parsing rule conditions like "X_3 <= 0.5"
+_CONDITION_RE = re.compile(
+    r"X_(\d+)\s*(<=|>=|<|>)\s*([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
+)
+
+# Vectorized comparison operators keyed by string token
+_OPERATORS = {
+    "<=": np.less_equal,
+    ">=": np.greater_equal,
+    "<": np.less,
+    ">": np.greater,
+}
 
 
 def eval_rule_on_data(rule_str, X):
@@ -45,44 +60,23 @@ def eval_rule_on_data(rule_str, X):
 
     Rule strings look like: 'X_1 > -0.06917 and X_5 <= 0.41409'
     Returns a binary float array (0.0 or 1.0) of shape (n_samples,).
+
+    Uses pre-compiled regex and numpy vectorized comparisons for performance.
     """
-    n = X.shape[0]
-    result = np.ones(n, dtype=bool)
-    conditions = rule_str.split(" and ")
-    for cond in conditions:
-        cond = cond.strip()
-        if "<=" in cond:
-            parts = cond.split("<=")
-            col_idx = int(parts[0].strip().split("_")[1])
-            val = float(parts[1].strip())
-            if col_idx < X.shape[1]:
-                result &= X[:, col_idx] <= val
-            else:
-                result[:] = False
-        elif ">=" in cond:
-            parts = cond.split(">=")
-            col_idx = int(parts[0].strip().split("_")[1])
-            val = float(parts[1].strip())
-            if col_idx < X.shape[1]:
-                result &= X[:, col_idx] >= val
-            else:
-                result[:] = False
-        elif ">" in cond:
-            parts = cond.split(">")
-            col_idx = int(parts[0].strip().split("_")[1])
-            val = float(parts[1].strip())
-            if col_idx < X.shape[1]:
-                result &= X[:, col_idx] > val
-            else:
-                result[:] = False
-        elif "<" in cond:
-            parts = cond.split("<")
-            col_idx = int(parts[0].strip().split("_")[1])
-            val = float(parts[1].strip())
-            if col_idx < X.shape[1]:
-                result &= X[:, col_idx] < val
-            else:
-                result[:] = False
+    n_samples, n_cols = X.shape
+    result = np.ones(n_samples, dtype=bool)
+
+    for match in _CONDITION_RE.finditer(rule_str):
+        col_idx = int(match.group(1))
+        op_str = match.group(2)
+        threshold = float(match.group(3))
+
+        if col_idx >= n_cols:
+            result[:] = False
+            break
+
+        result &= _OPERATORS[op_str](X[:, col_idx], threshold)
+
     return result.astype(np.float64)
 
 
@@ -93,20 +87,22 @@ def build_rule_feature_matrix(rulefit_model, X):
     This replaces the broken transform() method in current imodels.
     """
     X = np.asarray(X, dtype=np.float64)
-    n_features = X.shape[1]
+    n_samples, n_features = X.shape
     rules_no_fn = rulefit_model.rules_without_feature_names_
 
     if not rules_no_fn:
         return X.copy()
 
     n_rules = len(rules_no_fn)
-    X_augmented = np.zeros((X.shape[0], n_features + n_rules))
+    X_augmented = np.empty((n_samples, n_features + n_rules), dtype=np.float64)
     X_augmented[:, :n_features] = X
+    X_augmented[:, n_features:] = 0.0
+
     for i, rule in enumerate(rules_no_fn):
         try:
             X_augmented[:, n_features + i] = eval_rule_on_data(rule.rule, X)
         except Exception:
-            pass  # leave as zeros
+            pass  # column stays zero
 
     return X_augmented
 
@@ -239,6 +235,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         """
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64).ravel()
+        self._validate_fit_input(X, y)
 
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
@@ -246,6 +243,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         confirmatory_rules = confirmatory_rules or []
         optional_rules = optional_rules or []
+        self._validate_expert_rules(confirmatory_rules, "confirmatory")
+        self._validate_expert_rules(optional_rules, "optional")
         self.confirmatory_rules_ = confirmatory_rules
         self.optional_rules_ = optional_rules
 
@@ -271,19 +270,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         n_auto_features = X_rules.shape[1]
 
         # Step 3: Append confirmatory + optional expert rule features
-        expert_columns = []
-        expert_names = []
-        expert_categories = []  # 'confirmatory' or 'optional'
-        for rule in confirmatory_rules:
-            col = rule["evaluate"](X, self.feature_names_)
-            expert_columns.append(np.asarray(col, dtype=np.float64).reshape(-1, 1))
-            expert_names.append(f"confirmatory:{rule['name']}")
-            expert_categories.append("confirmatory")
-        for rule in optional_rules:
-            col = rule["evaluate"](X, self.feature_names_)
-            expert_columns.append(np.asarray(col, dtype=np.float64).reshape(-1, 1))
-            expert_names.append(f"optional:{rule['name']}")
-            expert_categories.append("optional")
+        expert_columns, expert_names, expert_categories = self._build_expert_columns(
+            X, confirmatory_rules, optional_rules
+        )
 
         n_expert = len(expert_columns)
         if expert_columns:
@@ -297,37 +286,28 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.expert_categories_ = expert_categories
 
         # Build penalty weight vector: 1.0 for auto, custom for expert
-        penalty_weights = np.ones(n_total_features)
-        for i, cat in enumerate(expert_categories):
-            idx = n_auto_features + i
-            if cat == "confirmatory":
-                penalty_weights[idx] = self.confirmatory_penalty
-            else:
-                penalty_weights[idx] = self.optional_penalty
+        penalty_weights = self._build_penalty_weights(
+            n_auto_features, n_total_features, expert_categories
+        )
 
         # Step 4: Bootstrap stabilization with Elastic Net (fixed seeds)
         # Scale features by 1/sqrt(w_j) so effective penalty = lambda * w_j
         inv_sqrt_w = 1.0 / np.sqrt(np.maximum(penalty_weights, 1e-12))
         rule_selection_count = np.zeros(n_total_features)
 
+        # Pre-scale the full matrix once; bootstrap only needs row indexing
+        X_all_scaled = X_all * inv_sqrt_w[np.newaxis, :]
+
         for b in range(self.n_bootstrap):
             rng = np.random.RandomState(self._BASE_SEED + b)
             idx = rng.choice(len(X), size=len(X), replace=True)
-            X_boot = X_all[idx] * inv_sqrt_w[np.newaxis, :]
+            X_boot = X_all_scaled[idx]
             y_boot = y[idx]
 
             try:
-                enet = ElasticNetCV(
-                    l1_ratio=self.l1_ratios,
-                    cv=5,
-                    random_state=self._BASE_SEED,
-                    tol=self.tol,
-                    max_iter=10000,
-                    selection="random",
-                )
+                enet = self._make_elasticnet(selection="random")
                 enet.fit(X_boot, y_boot)
-                selected = np.abs(enet.coef_) > 1e-10
-                rule_selection_count += selected.astype(int)
+                rule_selection_count += (np.abs(enet.coef_) > 1e-10)
             except Exception:
                 continue
 
@@ -337,36 +317,20 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         ) >= self.rule_threshold
 
         # Force-include ALL confirmatory and optional rules regardless of bootstrap
-        for i in range(n_expert):
-            self.stable_mask_[n_auto_features + i] = True
+        if n_expert > 0:
+            self.stable_mask_[n_auto_features:n_auto_features + n_expert] = True
 
         # Step 6: Re-fit final model on stable features with weighted scaling
         if self.stable_mask_.sum() > 0:
-            X_stable = X_all[:, self.stable_mask_]
-            w_stable = inv_sqrt_w[self.stable_mask_]
-            X_stable_weighted = X_stable * w_stable[np.newaxis, :]
-            self.final_model_ = ElasticNetCV(
-                l1_ratio=self.l1_ratios,
-                cv=5,
-                random_state=self._BASE_SEED,
-                tol=self.tol,
-                max_iter=10000,
-            )
-            self.final_model_.fit(X_stable_weighted, y)
-            # Store the weighting for predict-time
-            self.stable_inv_sqrt_w_ = w_stable
+            X_stable_weighted = X_all_scaled[:, self.stable_mask_]
+            self.stable_inv_sqrt_w_ = inv_sqrt_w[self.stable_mask_]
         else:
             self.stable_mask_ = np.ones(n_total_features, dtype=bool)
-            X_weighted = X_all * inv_sqrt_w[np.newaxis, :]
-            self.final_model_ = ElasticNetCV(
-                l1_ratio=self.l1_ratios,
-                cv=5,
-                random_state=self._BASE_SEED,
-                tol=self.tol,
-                max_iter=10000,
-            )
-            self.final_model_.fit(X_weighted, y)
+            X_stable_weighted = X_all_scaled
             self.stable_inv_sqrt_w_ = inv_sqrt_w
+
+        self.final_model_ = self._make_elasticnet()
+        self.final_model_.fit(X_stable_weighted, y)
 
         self.n_stable_rules_ = int(self.stable_mask_.sum())
         self.n_auto_features_ = n_auto_features
@@ -415,14 +379,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         X = np.asarray(X, dtype=np.float64)
         X_rules = build_rule_feature_matrix(self.base_rulefit_, X)
 
-        # Append expert rule columns
-        expert_columns = []
-        for rule in self.confirmatory_rules_:
-            col = rule["evaluate"](X, self.feature_names_)
-            expert_columns.append(np.asarray(col, dtype=np.float64).reshape(-1, 1))
-        for rule in self.optional_rules_:
-            col = rule["evaluate"](X, self.feature_names_)
-            expert_columns.append(np.asarray(col, dtype=np.float64).reshape(-1, 1))
+        expert_columns, _, _ = self._build_expert_columns(
+            X, self.confirmatory_rules_, self.optional_rules_
+        )
 
         if expert_columns:
             X_all = np.hstack([X_rules] + expert_columns)
@@ -443,14 +402,12 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         if self.rule_names_ is None or self.stable_mask_ is None:
             return set()
         stable_indices = np.where(self.stable_mask_)[0]
-        if self.final_model_ is not None:
-            final_coefs = self.final_model_.coef_
-            active = set()
-            for j, idx in enumerate(stable_indices):
-                if j < len(final_coefs) and abs(final_coefs[j]) > 1e-10:
-                    active.add(self.rule_names_[idx])
-            return active
-        return {self.rule_names_[i] for i in stable_indices}
+        final_coefs = self.final_model_.coef_
+        return {
+            self.rule_names_[idx]
+            for j, idx in enumerate(stable_indices)
+            if j < len(final_coefs) and abs(final_coefs[j]) > 1e-10
+        }
 
     def get_rule_importance(self):
         """Return rules sorted by absolute coefficient magnitude.
@@ -466,19 +423,11 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         for j, idx in enumerate(stable_indices):
             if j < len(final_coefs) and abs(final_coefs[j]) > 1e-10:
                 name = self.rule_names_[idx]
-                if name.startswith("confirmatory:"):
-                    category = "confirmatory"
-                elif name.startswith("optional:"):
-                    category = "optional"
-                elif name.startswith("linear:"):
-                    category = "linear"
-                else:
-                    category = "rule"
                 rules.append({
                     "name": name,
                     "coefficient": float(final_coefs[j]),
                     "abs_importance": abs(float(final_coefs[j])),
-                    "category": category,
+                    "category": _rule_category(name),
                 })
         rules.sort(key=lambda r: r["abs_importance"], reverse=True)
         return rules
@@ -497,7 +446,6 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         print(f"Stable features (>= {self.rule_threshold:.0%} bootstrap freq): {n_stable}")
         print(f"Active rules (non-zero coef): {len(selected)}")
 
-        # Show confirmatory rule status
         if self.confirmatory_rules_:
             print(f"\nConfirmatory rules ({len(self.confirmatory_rules_)}):")
             for s in self.confirmatory_status_:
@@ -521,15 +469,99 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             print(f"  coef={r['coefficient']:+.6f} | {r['name']}")
         print("=" * 60)
 
+    # ── Private helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _validate_fit_input(X, y):
+        """Validate training data dimensions and types."""
+        if X.ndim != 2:
+            raise ValueError(f"X must be 2-dimensional, got shape {X.shape}")
+        if y.ndim != 1:
+            raise ValueError(f"y must be 1-dimensional, got shape {y.shape}")
+        if X.shape[0] != y.shape[0]:
+            raise ValueError(
+                f"X and y have inconsistent sample counts: "
+                f"{X.shape[0]} vs {y.shape[0]}"
+            )
+        if X.shape[0] == 0:
+            raise ValueError("X must have at least one sample")
+
+    @staticmethod
+    def _validate_expert_rules(rules, label):
+        """Validate that expert rules have required keys."""
+        for i, rule in enumerate(rules):
+            if "name" not in rule:
+                raise ValueError(
+                    f"{label}_rules[{i}] missing required key 'name'"
+                )
+            if "evaluate" not in rule:
+                raise ValueError(
+                    f"{label}_rules[{i}] missing required key 'evaluate'"
+                )
+            if not callable(rule["evaluate"]):
+                raise ValueError(
+                    f"{label}_rules[{i}]['evaluate'] must be callable"
+                )
+
+    def _build_expert_columns(self, X, confirmatory_rules, optional_rules):
+        """Build expert rule feature columns, names, and categories.
+
+        Returns
+        -------
+        columns : list of ndarray, each shape (n_samples, 1)
+        names : list of str
+        categories : list of str ('confirmatory' or 'optional')
+        """
+        columns = []
+        names = []
+        categories = []
+        for rule in confirmatory_rules:
+            col = np.asarray(
+                rule["evaluate"](X, self.feature_names_), dtype=np.float64
+            )
+            columns.append(col.reshape(-1, 1))
+            names.append(f"confirmatory:{rule['name']}")
+            categories.append("confirmatory")
+        for rule in optional_rules:
+            col = np.asarray(
+                rule["evaluate"](X, self.feature_names_), dtype=np.float64
+            )
+            columns.append(col.reshape(-1, 1))
+            names.append(f"optional:{rule['name']}")
+            categories.append("optional")
+        return columns, names, categories
+
+    def _build_penalty_weights(self, n_auto, n_total, expert_categories):
+        """Build the penalty weight vector for weighted Elastic Net.
+
+        Auto-discovered features get weight 1.0. Expert features get
+        reduced weights based on their category (confirmatory or optional).
+        """
+        weights = np.ones(n_total)
+        penalty_map = {
+            "confirmatory": self.confirmatory_penalty,
+            "optional": self.optional_penalty,
+        }
+        for i, cat in enumerate(expert_categories):
+            weights[n_auto + i] = penalty_map[cat]
+        return weights
+
+    def _make_elasticnet(self, selection="cyclic"):
+        """Create a configured ElasticNetCV instance."""
+        return ElasticNetCV(
+            l1_ratio=self.l1_ratios,
+            cv=5,
+            random_state=self._BASE_SEED,
+            tol=self.tol,
+            max_iter=10000,
+            selection=selection,
+        )
+
     def _build_rule_names(self, n_features):
         """Build human-readable names for all rule features."""
-        names = []
-        for fn in self.feature_names_:
-            names.append(f"linear:{fn}")
+        names = [f"linear:{fn}" for fn in self.feature_names_]
         if hasattr(self.base_rulefit_, "rules_") and self.base_rulefit_.rules_ is not None:
-            for rule in self.base_rulefit_.rules_:
-                rule_str = str(rule)
-                names.append(f"rule:{rule_str[:60]}")
+            names.extend(f"rule:{str(rule)[:60]}" for rule in self.base_rulefit_.rules_)
         while len(names) < n_features:
             names.append(f"rule:unknown_{len(names)}")
         self.rule_names_ = names[:n_features]
@@ -547,19 +579,30 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             self.confirmatory_all_active_ = True
             return
 
+        # Build a lookup: rule name → position in stable feature set
         stable_indices = np.where(self.stable_mask_)[0]
         final_coefs = self.final_model_.coef_
+        name_to_active = {}
+        for j, idx in enumerate(stable_indices):
+            if j < len(final_coefs):
+                name_to_active[self.rule_names_[idx]] = abs(final_coefs[j]) > 1e-10
 
         for rule in self.confirmatory_rules_:
             name = f"confirmatory:{rule['name']}"
-            # Find this rule's position in the stable feature set
-            active = False
-            for j, idx in enumerate(stable_indices):
-                if j < len(final_coefs) and self.rule_names_[idx] == name:
-                    active = abs(final_coefs[j]) > 1e-10
-                    break
+            active = name_to_active.get(name, False)
             self.confirmatory_status_.append({"name": rule["name"], "active": active})
             if not active:
                 all_active = False
 
         self.confirmatory_all_active_ = all_active
+
+
+def _rule_category(name):
+    """Determine the category of a rule from its prefixed name."""
+    if name.startswith("confirmatory:"):
+        return "confirmatory"
+    if name.startswith("optional:"):
+        return "optional"
+    if name.startswith("linear:"):
+        return "linear"
+    return "rule"
