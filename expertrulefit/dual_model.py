@@ -271,18 +271,18 @@ class DualModel(BaseEstimator, ClassifierMixin):
             # ERF: find which rules are active for this sample
             erf_active = []
             stable_indices = np.where(self.erf_.stable_mask_)[0]
-            final_coefs = self.erf_.final_model_.coef_
+            true_coefs = self.erf_._get_true_coefficients()
             X_pred = self.erf_._build_predict_matrix(X[i:i+1])
 
             for j, idx in enumerate(stable_indices):
-                if j < len(final_coefs) and abs(final_coefs[j]) > 1e-10:
+                if j < len(true_coefs) and abs(true_coefs[j]) > 1e-10:
                     if abs(X_pred[0, j]) > 1e-10:  # feature is active for this sample
                         name = self.erf_.rule_names_[idx]
                         category = "confirmatory" if name.startswith("confirmatory:") else \
                                    "optional" if name.startswith("optional:") else "auto"
                         erf_active.append({
                             "rule": name,
-                            "coefficient": float(final_coefs[j]),
+                            "coefficient": float(true_coefs[j]),
                             "category": category,
                         })
 
