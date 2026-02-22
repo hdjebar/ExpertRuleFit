@@ -19,7 +19,7 @@ ExpertRuleFit replaces Lasso with a **deterministic-by-design** pipeline:
 5. **Final LogisticRegressionCV** — refit on stable features only with adaptive weighting
 6. **Confirmatory enforcement** — if any regulatory rule is zeroed by the solver, a post-hoc constrained refit (unpenalized logistic regression) guarantees inclusion
 
-Guaranteed reproducible under a deterministic runtime: **pinned versions + single-threaded BLAS/OpenMP + fixed seed + fixed schema ⇒ same rules and same predictions**.
+Guaranteed reproducible within a deterministic execution envelope: **pinned dependency versions, single-threaded BLAS/OpenMP, fixed random seeds, validated input schema with stable feature order, and consistent platform/runtime settings ⇒ identical rule set and identical predictions**.
 
 ## Validation Results
 
