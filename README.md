@@ -12,10 +12,12 @@ Standard RuleFit uses Lasso (L1) for rule selection, which is **inherently unsta
 
 ExpertRuleFit replaces Lasso with a **deterministic-by-design** pipeline:
 
-1. **Fixed-seed tree generation** — same candidate rules regardless of external `random_state`
-2. **Bootstrap × LogisticRegressionCV (elastic net)** — 10 bootstrap samples with Elastic Net (L1+L2)
-3. **Frequency-based filtering** — keep only rules selected in >= 80% of bootstraps
-4. **Final LogisticRegressionCV** — refit on stable features only
+1. **Fixed-seed Gradient Boosting** — deterministic tree ensemble (`_BASE_SEED=42`) generates candidate rules + linear features via imodels RuleFit, independent of user `random_state`
+2. **Expert rule augmentation** — append confirmatory (regulatory) and optional (analyst) rules with adaptive penalty weighting (Zou 2006)
+3. **Bootstrap × LogisticRegressionCV (elastic net)** — 10 deterministic bootstrap iterations, each fitting weighted Elastic Net (L1+L2) with per-feature penalty scaling
+4. **Frequency-based filtering** — keep only rules selected in ≥ 80% of bootstraps; confirmatory rules are force-included
+5. **Final LogisticRegressionCV** — refit on stable features only with adaptive weighting
+6. **Confirmatory enforcement** — if any regulatory rule is zeroed by the solver, a post-hoc constrained refit (unpenalized logistic regression) guarantees inclusion
 
 This guarantees: **same data → same rules → same predictions → audit-ready**.
 
@@ -123,10 +125,12 @@ ExpertRuleFit is a **binary classifier** (classes {0, 1}). It outputs both hard 
 
 ```
 Training data
-  → Fixed-seed RuleFit (candidate rules + linear features)
-  → Append expert rules (confirmatory / optional)
-  → Bootstrap × LogisticRegressionCV (stability filtering)
+  → Fixed-seed GradientBoosting (candidate rules + linear features)
+  → Augment with expert rules (confirmatory / optional, adaptive penalty weighting)
+  → Bootstrap × weighted LogisticRegressionCV (elastic net stability filtering)
+  → Frequency filter (≥ 80%, confirmatory force-included)
   → Final LogisticRegressionCV on stable features
+  → Constrained refit if confirmatory rules zeroed
   → Logistic sigmoid → calibrated P(y=1)
 ```
 
@@ -284,9 +288,14 @@ Different seed → different trees → different rules
 
 ### ExpertRuleFit (deterministic + rule preservation)
 ```
-Fixed-seed trees → append expert rules → Bootstrap × weighted LogisticRegressionCV → frequency filter → final fit
+Fixed-seed GradientBoosting (BASE_SEED=42) → extract rules + linear features
+  → augment with expert rules (adaptive penalty weighting)
+  → Bootstrap × weighted LogisticRegressionCV (elastic net)
+  → frequency filter (≥ 80%, confirmatory force-included)
+  → final LogisticRegressionCV on stable features
+  → constrained refit if confirmatory rules zeroed
 Same data → same trees → same stable rules → same output
-Confirmatory rules: penalty ≈ 0 → never eliminated
+Confirmatory rules: penalty ≈ 0 → never eliminated; constrained refit as fallback
 ```
 
 ### Why Elastic Net?
