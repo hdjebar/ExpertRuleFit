@@ -253,6 +253,11 @@ def build_rule_feature_matrix(rulefit_model, X, *, min_support=0.0,
     -------
     X_augmented : sparse CSR matrix of shape (n_samples, n_features + n_rules)
     """
+    if sparse.issparse(X):
+        raise TypeError(
+            "build_rule_feature_matrix does not accept sparse input. "
+            "Pass a dense numpy array instead."
+        )
     X = np.asarray(X, dtype=np.float64, copy=False)
     rules_no_fn = rulefit_model.rules_without_feature_names_
 
@@ -342,6 +347,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Number of CPU cores for cross-validation. ``None`` means 1 core.
         Use ``-1`` for all cores (caution on shared infrastructure).
 
+    calibration : str or None, default=None
+        Post-hoc probability calibration method. ``None`` disables
+        calibration (logistic outputs used directly). Options:
+
+        - ``"isotonic"`` — non-parametric isotonic regression
+        - ``"sigmoid"`` — Platt scaling (parametric logistic fit)
+
+        Uses ``CalibratedClassifierCV`` with 5-fold CV on training data.
+
     Attributes
     ----------
     base_rulefit_ : RuleFitClassifier
@@ -390,6 +404,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         l1_ratios=None,
         tol=1e-4,
         n_jobs=None,
+        calibration=None,
     ):
         self.n_estimators = n_estimators
         self.tree_size = tree_size
@@ -402,6 +417,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.l1_ratios = l1_ratios or [0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
         self.tol = tol
         self.n_jobs = n_jobs
+        self.calibration = calibration
 
     # ------------------------------------------------------------------
     # Validation
@@ -673,6 +689,27 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                     "perfect collinearity or degenerate data for these rules."
                 )
 
+        # === Step 8 (optional): Post-hoc probability calibration ===
+        self.calibrator_ = None
+        if self.calibration is not None:
+            valid = ("isotonic", "sigmoid")
+            if self.calibration not in valid:
+                raise ValueError(
+                    f"calibration must be one of {valid}, got '{self.calibration}'"
+                )
+            from sklearn.calibration import CalibratedClassifierCV
+
+            logger.info("Step 8: Post-hoc calibration (method=%s)", self.calibration)
+            self.calibrator_ = CalibratedClassifierCV(
+                self.final_model_,
+                method=self.calibration,
+                cv=5,
+            )
+            X_stable_weighted = X_all[:, self.stable_mask_].multiply(
+                inv_sqrt_w[self.stable_mask_]
+            )
+            self.calibrator_.fit(X_stable_weighted, y)
+
         return self
 
     # ------------------------------------------------------------------
@@ -750,6 +787,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         """
         check_is_fitted(self, ["base_rulefit_", "final_model_"])
         X_weighted = self._build_predict_matrix(X)
+        if getattr(self, "calibrator_", None) is not None:
+            return self.calibrator_.predict_proba(X_weighted)
         return self.final_model_.predict_proba(X_weighted)
 
     def _build_predict_matrix(self, X):
@@ -868,6 +907,197 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         rules.sort(key=lambda r: r["abs_importance"], reverse=True)
         return rules
 
+    def selection_frequency_table(self):
+        """Return a table of all features sorted by bootstrap frequency.
+
+        Returns
+        -------
+        table : list of dict
+            Each dict has keys: ``name``, ``frequency``, ``stable``,
+            ``category``, ``coefficient`` (if stable and active).
+        """
+        check_is_fitted(self, ["base_rulefit_", "final_model_"])
+
+        stable_indices = set(np.where(self.stable_mask_)[0].tolist())
+        true_coefs = self._get_true_coefficients()
+        stable_idx_list = np.where(self.stable_mask_)[0]
+        coef_map = {}
+        for j, idx in enumerate(stable_idx_list):
+            if j < len(true_coefs):
+                coef_map[idx] = float(true_coefs[j])
+
+        rows = []
+        for i, name in enumerate(self.rule_names_):
+            row = {
+                "name": name,
+                "frequency": float(self.bootstrap_frequencies_[i]),
+                "stable": i in stable_indices,
+                "category": _rule_category(name),
+            }
+            if i in coef_map:
+                row["coefficient"] = coef_map[i]
+            rows.append(row)
+
+        rows.sort(key=lambda r: r["frequency"], reverse=True)
+        return rows
+
+    def stability_path(self, thresholds=None):
+        """Compute how the selected feature set changes across thresholds.
+
+        Parameters
+        ----------
+        thresholds : list of float, optional
+            Bootstrap frequency thresholds to evaluate.
+            Default: ``[0.5, 0.6, 0.7, 0.8, 0.9, 1.0]``.
+
+        Returns
+        -------
+        path : list of dict
+            Each dict has keys: ``threshold``, ``n_selected``,
+            ``selected_names``, ``jaccard_vs_current`` (Jaccard similarity
+            with the model's actual selected set).
+        """
+        check_is_fitted(self, ["base_rulefit_", "final_model_"])
+
+        if thresholds is None:
+            thresholds = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+
+        current_set = set(np.where(self.stable_mask_)[0].tolist())
+
+        path = []
+        for t in sorted(thresholds):
+            mask = self.bootstrap_frequencies_ >= t
+
+            # Force-include confirmatory rules (same logic as fit)
+            n_auto = self.n_auto_features_
+            for i, cat in enumerate(self.expert_categories_):
+                if cat == "confirmatory":
+                    mask[n_auto + i] = True
+
+            selected = set(np.where(mask)[0].tolist())
+            selected_names = [self.rule_names_[i] for i in sorted(selected)]
+
+            # Jaccard similarity
+            if current_set or selected:
+                jaccard = len(current_set & selected) / len(current_set | selected)
+            else:
+                jaccard = 1.0
+
+            path.append({
+                "threshold": t,
+                "n_selected": len(selected),
+                "selected_names": selected_names,
+                "jaccard_vs_current": jaccard,
+            })
+
+        return path
+
+    def reason_codes(self, X, top_k=5):
+        """Return per-sample top contributing features (reason codes).
+
+        For each sample, computes ``contribution_j = coef_j * x_j`` for
+        all stable features and returns the top-K by absolute contribution.
+        This is the standard "reason code" format used in credit scoring.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+        top_k : int, default=5
+            Number of top contributors to return per sample.
+
+        Returns
+        -------
+        reasons : list of list of dict
+            Outer list: one entry per sample.  Inner list: top-K dicts,
+            each with keys ``name``, ``contribution``, ``coefficient``,
+            ``feature_value``, ``category``.
+        """
+        check_is_fitted(self, ["base_rulefit_", "final_model_"])
+
+        X_weighted = self._build_predict_matrix(X)
+        true_coefs = self._get_true_coefficients()
+        stable_indices = np.where(self.stable_mask_)[0]
+
+        if sparse.issparse(X_weighted):
+            X_dense = np.asarray(X_weighted.todense())
+        else:
+            X_dense = np.asarray(X_weighted)
+
+        all_reasons = []
+        for i in range(X_dense.shape[0]):
+            contributions = []
+            for j, idx in enumerate(stable_indices):
+                if j >= len(true_coefs):
+                    break
+                coef = float(true_coefs[j])
+                val = float(X_dense[i, j])
+                contrib = coef * val
+                if abs(contrib) < 1e-12:
+                    continue
+                name = self.rule_names_[idx]
+                contributions.append({
+                    "name": name,
+                    "contribution": contrib,
+                    "coefficient": coef,
+                    "feature_value": val,
+                    "category": _rule_category(name),
+                })
+            contributions.sort(key=lambda c: abs(c["contribution"]), reverse=True)
+            all_reasons.append(contributions[:top_k])
+
+        return all_reasons
+
+    def audit_bundle(self):
+        """Generate an audit bundle for regulatory review.
+
+        Returns a dict containing all model artifacts needed for audit:
+        rule definitions, coefficients, bootstrap frequencies, and
+        environment metadata.
+
+        Returns
+        -------
+        bundle : dict
+        """
+        check_is_fitted(self, ["base_rulefit_", "final_model_"])
+        import sklearn
+        import platform
+
+        stable_indices = np.where(self.stable_mask_)[0]
+        true_coefs = self._get_true_coefficients()
+
+        rules = []
+        for j, idx in enumerate(stable_indices):
+            if j >= len(true_coefs):
+                break
+            rules.append({
+                "name": self.rule_names_[idx],
+                "coefficient": float(true_coefs[j]),
+                "bootstrap_frequency": float(self.bootstrap_frequencies_[idx]),
+                "category": _rule_category(self.rule_names_[idx]),
+                "active": abs(true_coefs[j]) > 1e-10,
+            })
+
+        return {
+            "model_type": "ExpertRuleFit",
+            "intercept": float(self.final_model_.intercept_[0]),
+            "n_candidate_features": len(self.rule_names_),
+            "n_stable_features": int(self.stable_mask_.sum()),
+            "n_active_features": sum(1 for r in rules if r["active"]),
+            "bootstrap_iterations": self.n_bootstrap,
+            "rule_threshold": self.rule_threshold,
+            "confirmatory_penalty": self.confirmatory_penalty,
+            "optional_penalty": self.optional_penalty,
+            "confirmatory_all_active": self.confirmatory_all_active_,
+            "rules": rules,
+            "feature_names": self.feature_names_,
+            "environment": {
+                "python": platform.python_version(),
+                "sklearn": sklearn.__version__,
+                "numpy": np.__version__,
+                "platform": platform.platform(),
+            },
+        }
+
     # ------------------------------------------------------------------
     # Summary / reporting
     # ------------------------------------------------------------------
@@ -936,6 +1166,91 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         print(text)
         return None
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def save(self, path):
+        """Save the fitted model to disk.
+
+        Stores the sklearn-compatible components (base RuleFit, final model,
+        masks, coefficients) via joblib.  Expert rule *callables* are NOT
+        saved — if you need portable rules, use ``RuleSpec`` objects and
+        save them separately with ``save_rule_specs()``.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            File path for the saved model (e.g., ``"model.joblib"``).
+        """
+        import joblib
+        check_is_fitted(self, ["base_rulefit_", "final_model_"])
+
+        state = {
+            # Hyperparameters
+            "params": self.get_params(),
+            # Fitted state
+            "base_rulefit_": self.base_rulefit_,
+            "final_model_": self.final_model_,
+            "stable_mask_": self.stable_mask_,
+            "stable_inv_sqrt_w_": self.stable_inv_sqrt_w_,
+            "bootstrap_frequencies_": self.bootstrap_frequencies_,
+            "rule_names_": self.rule_names_,
+            "feature_names_": self.feature_names_,
+            "expert_categories_": self.expert_categories_,
+            "n_stable_rules_": self.n_stable_rules_,
+            "n_auto_features_": self.n_auto_features_,
+            "n_expert_": self.n_expert_,
+            "confirmatory_all_active_": self.confirmatory_all_active_,
+            "confirmatory_status_": self.confirmatory_status_,
+        }
+        joblib.dump(state, path)
+
+    @classmethod
+    def load(cls, path, confirmatory_rules=None, optional_rules=None):
+        """Load a saved model from disk.
+
+        Expert rule callables are NOT saved (lambdas aren't serializable).
+        Pass the same ``confirmatory_rules`` / ``optional_rules`` used at
+        training time to restore prediction capability.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            File path of the saved model.
+        confirmatory_rules : list of dict, optional
+            Same confirmatory rules used during ``fit()``.
+        optional_rules : list of dict, optional
+            Same optional rules used during ``fit()``.
+
+        Returns
+        -------
+        model : ExpertRuleFit
+            Restored fitted model.
+        """
+        import joblib
+
+        state = joblib.load(path)
+
+        model = cls(**state["params"])
+        model.base_rulefit_ = state["base_rulefit_"]
+        model.final_model_ = state["final_model_"]
+        model.stable_mask_ = state["stable_mask_"]
+        model.stable_inv_sqrt_w_ = state["stable_inv_sqrt_w_"]
+        model.bootstrap_frequencies_ = state["bootstrap_frequencies_"]
+        model.rule_names_ = state["rule_names_"]
+        model.feature_names_ = state["feature_names_"]
+        model.expert_categories_ = state["expert_categories_"]
+        model.n_stable_rules_ = state["n_stable_rules_"]
+        model.n_auto_features_ = state["n_auto_features_"]
+        model.n_expert_ = state["n_expert_"]
+        model.confirmatory_all_active_ = state["confirmatory_all_active_"]
+        model.confirmatory_status_ = state["confirmatory_status_"]
+        model.confirmatory_rules_ = confirmatory_rules or []
+        model.optional_rules_ = optional_rules or []
+
+        return model
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -19,7 +19,9 @@ ExpertRuleFit replaces Lasso with a **deterministic-by-design** pipeline:
 5. **Final LogisticRegressionCV** — refit on stable features only with adaptive weighting
 6. **Confirmatory enforcement** — if any regulatory rule is zeroed by the solver, a post-hoc constrained refit (unpenalized logistic regression) guarantees inclusion
 
-This guarantees: **same data → same rules → same predictions → audit-ready**.
+Guaranteed reproducible within a deterministic execution envelope: **pinned dependency versions, single-threaded BLAS/OpenMP, fixed random seeds, validated input schema with stable feature order, and consistent platform/runtime settings ⇒ identical rule set and identical predictions**.
+
+> **Container deployment:** For a step-by-step guide to enforcing this guarantee via Docker (pinned digests, locked wheels, deterministic numerics, schema validation, auditable fingerprints), see **[docs/REPRODUCIBILITY_CONTAINERS.md](docs/REPRODUCIBILITY_CONTAINERS.md)**.
 
 ## Validation Results
 
@@ -80,7 +82,7 @@ assert erf.confirmatory_all_active_, "COMPLIANCE FAILURE: confirmatory rule elim
 erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 ```
 
-**How it works:** confirmatory rules get near-zero regularization penalty (1e-8 vs 1.0), making it mathematically impossible for Elastic Net to eliminate them. This is implemented via feature scaling: `X_j * 1/sqrt(w_j)` where `w_j ~ 0`.
+**How it works:** Confirmatory rules are given a very small penalty weight using weighted feature scaling. We fit on `X_j / sqrt(w_j)`, which reduces the effective elastic-net penalty on confirmatory coefficients (L2 scaled by `w_j`, L1 scaled by `sqrt(w_j)`). With `w_j = 1e-8`, confirmatory rules are very unlikely to be shrunk to zero by regularization. **Important:** A confirmatory coefficient can still be near/at zero if the rule carries no incremental signal, is perfectly collinear, or due to solver tolerances. ExpertRuleFit detects this and performs a post-hoc refit to enforce inclusion.
 
 ### With EBM-Discovered Interactions (automated pipeline)
 
@@ -275,6 +277,7 @@ tests/
     test_dual_model.py       # DualModel tests (4 tests)
 docs/
     SOTA.md                  # State-of-the-art survey (2023--2026)
+    REPRODUCIBILITY_CONTAINERS.md  # Container-based reproducibility guide
 output/                      # Benchmark results (figures, CSVs, report)
 ```
 

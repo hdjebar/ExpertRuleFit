@@ -10,14 +10,11 @@ Usage: python examples/quick_demo.py
 import warnings
 warnings.filterwarnings("ignore")
 
-import os
-import sys
 import hashlib
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from expertrulefit import ExpertRuleFit
 from imodels import RuleFitClassifier
 
