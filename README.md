@@ -80,7 +80,7 @@ assert erf.confirmatory_all_active_, "COMPLIANCE FAILURE: confirmatory rule elim
 erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 ```
 
-**How it works:** confirmatory rules get near-zero penalty weight (`w_j = 1e-8` vs `1.0` for auto rules). Feature scaling `X_j * 1/sqrt(w_j)` reduces the effective L1 penalty by `sqrt(w_j) = 1e-4` and L2 by `w_j = 1e-8`, making elimination extremely unlikely. As a structural guarantee, if any confirmatory rule is still zeroed by the solver, a post-hoc constrained refit (unpenalized logistic regression) re-introduces it — see `_refit_with_confirmatory()`.
+**How it works:** Confirmatory rules are given a very small penalty weight using weighted feature scaling. We fit on `X_j / sqrt(w_j)`, which reduces the effective elastic-net penalty on confirmatory coefficients (L2 scaled by `w_j`, L1 scaled by `sqrt(w_j)`). With `w_j = 1e-8`, confirmatory rules are very unlikely to be shrunk to zero by regularization. **Important:** A confirmatory coefficient can still be near/at zero if the rule carries no incremental signal, is perfectly collinear, or due to solver tolerances. ExpertRuleFit detects this and performs a post-hoc refit to enforce inclusion.
 
 ### With EBM-Discovered Interactions (automated pipeline)
 
