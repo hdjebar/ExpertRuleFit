@@ -13,9 +13,9 @@ Standard RuleFit uses Lasso (L1) for rule selection, which is **inherently unsta
 ExpertRuleFit replaces Lasso with a **deterministic-by-design** pipeline:
 
 1. **Fixed-seed tree generation** — same candidate rules regardless of external `random_state`
-2. **Bootstrap × ElasticNetCV** — 10 bootstrap samples with Elastic Net (L1+L2)
+2. **Bootstrap × LogisticRegressionCV (elastic net)** — 10 bootstrap samples with Elastic Net (L1+L2)
 3. **Frequency-based filtering** — keep only rules selected in >= 80% of bootstraps
-4. **Final ElasticNetCV** — refit on stable features only
+4. **Final LogisticRegressionCV** — refit on stable features only
 
 This guarantees: **same data → same rules → same predictions → audit-ready**.
 
@@ -125,7 +125,7 @@ ExpertRuleFit is a **binary classifier** (classes {0, 1}). It outputs both hard 
 Training data
   → Fixed-seed RuleFit (candidate rules + linear features)
   → Append expert rules (confirmatory / optional)
-  → Bootstrap × ElasticNetCV (stability filtering)
+  → Bootstrap × LogisticRegressionCV (stability filtering)
   → Final LogisticRegressionCV on stable features
   → Logistic sigmoid → calibrated P(y=1)
 ```
@@ -284,7 +284,7 @@ Different seed → different trees → different rules
 
 ### ExpertRuleFit (deterministic + rule preservation)
 ```
-Fixed-seed trees → append expert rules → Bootstrap × weighted ElasticNetCV → frequency filter → final fit
+Fixed-seed trees → append expert rules → Bootstrap × weighted LogisticRegressionCV → frequency filter → final fit
 Same data → same trees → same stable rules → same output
 Confirmatory rules: penalty ≈ 0 → never eliminated
 ```
