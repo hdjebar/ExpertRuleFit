@@ -19,7 +19,7 @@ ExpertRuleFit replaces Lasso with a **deterministic-by-design** pipeline:
 5. **Final LogisticRegressionCV** — refit on stable features only with adaptive weighting
 6. **Confirmatory enforcement** — if any regulatory rule is zeroed by the solver, a post-hoc constrained refit (unpenalized logistic regression) guarantees inclusion
 
-On the same environment (Python version, sklearn/numpy/imodels versions, CPU architecture, BLAS library), this guarantees: **same data → same rules → same predictions → audit-ready**. Cross-platform reproducibility additionally requires single-threaded BLAS (`OPENBLAS_NUM_THREADS=1` or `MKL_NUM_THREADS=1`) and identical dependency versions.
+Reproducible under controlled execution: **same data + same config + pinned versions + deterministic runtime ⇒ same rules and predictions**.
 
 ## Validation Results
 
