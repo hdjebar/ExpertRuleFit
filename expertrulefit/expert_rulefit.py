@@ -46,6 +46,7 @@ import warnings
 
 import numpy as np
 from joblib import Parallel, delayed
+from threadpoolctl import threadpool_limits
 from packaging.version import Version
 from scipy import sparse
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -405,6 +406,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         tol=1e-4,
         n_jobs=None,
         calibration=None,
+        deterministic=True,
+        thread_limit=1,
     ):
         self.n_estimators = n_estimators
         self.tree_size = tree_size
@@ -418,6 +421,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.tol = tol
         self.n_jobs = n_jobs
         self.calibration = calibration
+        self.deterministic = deterministic
+        self.thread_limit = thread_limit
 
     # ------------------------------------------------------------------
     # Validation
@@ -536,179 +541,205 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self._validate_expert_rules(confirmatory_rules, X, "Confirmatory")
         self._validate_expert_rules(optional_rules, X, "Optional")
 
-        # === Step 1: Fit base RuleFit with FIXED seed ===
-        logger.info("Step 1: Fitting base RuleFit (seed=%d)", self._BASE_SEED)
-        self.base_rulefit_ = RuleFitClassifier(
-            n_estimators=self.n_estimators,
-            tree_size=self.tree_size,
-            max_rules=self.max_rules,
-            random_state=self._BASE_SEED,
-            include_linear=True,
+        # Deterministic execution envelope: when deterministic=True (default),
+        # clamp all BLAS/OpenMP thread pools to self.thread_limit and force
+        # sequential execution (n_jobs=1) for bootstraps + inner CV.
+        # This guarantees identical results regardless of env-var settings.
+        # Note: threadpool_limits propagates to all calls within this block
+        # but NOT to joblib child processes — which is fine because
+        # deterministic=True forces bootstrap_n_jobs=1 (sequential).
+        inner_n_jobs = 1 if self.deterministic else self.n_jobs
+        bootstrap_n_jobs = (
+            1 if self.deterministic
+            else (1 if self.n_jobs and self.n_jobs != 1 else -1)
         )
-        self.base_rulefit_.fit(X, y, feature_names=self.feature_names_)
+        thread_limit = self.thread_limit if self.deterministic else None
 
-        # === Step 2: Build rule feature matrix ===
-        X_rules_sparse = build_rule_feature_matrix(self.base_rulefit_, X)
-        n_auto_features = X_rules_sparse.shape[1]
-
-        # === Step 3: Append expert rules ===
-        expert_columns = []
-        expert_names = []
-        expert_categories = []
-
-        for rule in confirmatory_rules:
-            col = np.asarray(
-                rule["evaluate"](X, self.feature_names_), dtype=np.float64
+        with threadpool_limits(limits=thread_limit):
+            # === Step 1: Fit base RuleFit with FIXED seed ===
+            logger.info("Step 1: Fitting base RuleFit (seed=%d)", self._BASE_SEED)
+            self.base_rulefit_ = RuleFitClassifier(
+                n_estimators=self.n_estimators,
+                tree_size=self.tree_size,
+                max_rules=self.max_rules,
+                random_state=self._BASE_SEED,
+                include_linear=True,
             )
-            expert_columns.append(sparse.csc_matrix(col).T)
-            expert_names.append(f"confirmatory:{rule['name']}")
-            expert_categories.append("confirmatory")
+            self.base_rulefit_.fit(X, y, feature_names=self.feature_names_)
 
-        for rule in optional_rules:
-            col = np.asarray(
-                rule["evaluate"](X, self.feature_names_), dtype=np.float64
-            )
-            expert_columns.append(sparse.csc_matrix(col).T)
-            expert_names.append(f"optional:{rule['name']}")
-            expert_categories.append("optional")
+            # === Step 2: Build rule feature matrix ===
+            X_rules_sparse = build_rule_feature_matrix(self.base_rulefit_, X)
+            n_auto_features = X_rules_sparse.shape[1]
 
-        n_expert = len(expert_columns)
+            # === Step 3: Append expert rules ===
+            expert_columns = []
+            expert_names = []
+            expert_categories = []
 
-        if expert_columns:
-            X_all = sparse.hstack([X_rules_sparse] + expert_columns, format="csr")
-        else:
-            X_all = X_rules_sparse
+            for rule in confirmatory_rules:
+                col = np.asarray(
+                    rule["evaluate"](X, self.feature_names_), dtype=np.float64
+                )
+                expert_columns.append(sparse.csc_matrix(col).T)
+                expert_names.append(f"confirmatory:{rule['name']}")
+                expert_categories.append("confirmatory")
 
-        n_total_features = X_all.shape[1]
-        self._build_rule_names(n_auto_features)
-        self.rule_names_ = self.rule_names_ + expert_names
-        self.expert_categories_ = expert_categories
+            for rule in optional_rules:
+                col = np.asarray(
+                    rule["evaluate"](X, self.feature_names_), dtype=np.float64
+                )
+                expert_columns.append(sparse.csc_matrix(col).T)
+                expert_names.append(f"optional:{rule['name']}")
+                expert_categories.append("optional")
 
-        # === Build penalty weight vector ===
-        penalty_weights = np.ones(n_total_features)
-        penalty_map = {"confirmatory": self.confirmatory_penalty,
-                       "optional": self.optional_penalty}
-        for i, cat in enumerate(expert_categories):
-            penalty_weights[n_auto_features + i] = penalty_map[cat]
+            n_expert = len(expert_columns)
 
-        # inv_sqrt_w: feature scaling so effective L2 penalty = l2*w_j*b_j^2
-        inv_sqrt_w = 1.0 / np.sqrt(np.maximum(penalty_weights, 1e-12))
+            if expert_columns:
+                X_all = sparse.hstack(
+                    [X_rules_sparse] + expert_columns, format="csr"
+                )
+            else:
+                X_all = X_rules_sparse
 
-        # === Step 4: Bootstrap stabilization (parallelized) ===
-        logger.info(
-            "Step 4: Bootstrap stabilization (%d iterations)", self.n_bootstrap
-        )
+            n_total_features = X_all.shape[1]
+            self._build_rule_names(n_auto_features)
+            self.rule_names_ = self.rule_names_ + expert_names
+            self.expert_categories_ = expert_categories
 
-        # Each bootstrap iteration is independent — run in parallel
-        # When n_jobs is used for inner CV, use sequential bootstrap;
-        # otherwise parallelize the outer loop.
-        bootstrap_n_jobs = 1 if self.n_jobs and self.n_jobs != 1 else -1
-        results = Parallel(n_jobs=bootstrap_n_jobs)(
-            delayed(_bootstrap_iteration)(
-                b, X_all, y, inv_sqrt_w,
-                self._BASE_SEED, self.l1_ratios, self.tol, self.n_jobs,
-            )
-            for b in range(self.n_bootstrap)
-        )
+            # === Build penalty weight vector ===
+            penalty_weights = np.ones(n_total_features)
+            penalty_map = {"confirmatory": self.confirmatory_penalty,
+                           "optional": self.optional_penalty}
+            for i, cat in enumerate(expert_categories):
+                penalty_weights[n_auto_features + i] = penalty_map[cat]
 
-        # Filter out failed iterations (returned as None by exception wrapper)
-        successful = [r for r in results if r is not None]
-        n_successful_boots = len(successful)
+            # inv_sqrt_w: feature scaling so effective L2 penalty = l2*w_j*b_j^2
+            inv_sqrt_w = 1.0 / np.sqrt(np.maximum(penalty_weights, 1e-12))
 
-        if n_successful_boots == 0:
-            raise RuntimeError(
-                "All bootstrap iterations failed. Cannot determine stable rules."
+            # === Step 4: Bootstrap stabilization ===
+            logger.info(
+                "Step 4: Bootstrap stabilization (%d iterations, "
+                "bootstrap_n_jobs=%d, inner_n_jobs=%s)",
+                self.n_bootstrap, bootstrap_n_jobs, inner_n_jobs,
             )
 
-        rule_selection_count = np.sum(successful, axis=0)
-
-        if n_successful_boots < self.n_bootstrap:
-            warnings.warn(
-                f"Only {n_successful_boots}/{self.n_bootstrap} bootstrap iterations "
-                f"succeeded. Stability estimates may be unreliable."
+            results = Parallel(n_jobs=bootstrap_n_jobs)(
+                delayed(_bootstrap_iteration)(
+                    b, X_all, y, inv_sqrt_w,
+                    self._BASE_SEED, self.l1_ratios, self.tol, inner_n_jobs,
+                )
+                for b in range(self.n_bootstrap)
             )
 
-        # === Step 5: Frequency-based filtering ===
-        self.bootstrap_frequencies_ = rule_selection_count / n_successful_boots
-        self.stable_mask_ = self.bootstrap_frequencies_ >= self.rule_threshold
+            # Filter out failed iterations (returned as None)
+            successful = [r for r in results if r is not None]
+            n_successful_boots = len(successful)
 
-        # Force-include ONLY confirmatory rules (optional rules must earn it)
-        for i, cat in enumerate(expert_categories):
-            if cat == "confirmatory":
-                self.stable_mask_[n_auto_features + i] = True
-            # optional rules keep their bootstrap-determined value
+            if n_successful_boots == 0:
+                raise RuntimeError(
+                    "All bootstrap iterations failed. "
+                    "Cannot determine stable rules."
+                )
 
-        logger.info(
-            "Step 5: %d/%d features survived bootstrap (threshold=%.0f%%)",
-            self.stable_mask_.sum(),
-            n_total_features,
-            self.rule_threshold * 100,
-        )
+            rule_selection_count = np.sum(successful, axis=0)
 
-        # === Step 6: Final fit on stable features ===
-        if self.stable_mask_.sum() == 0:
-            raise RuntimeError(
-                "No features survived bootstrap filtering. Consider lowering "
-                "rule_threshold or increasing n_bootstrap."
+            if n_successful_boots < self.n_bootstrap:
+                warnings.warn(
+                    f"Only {n_successful_boots}/{self.n_bootstrap} bootstrap "
+                    f"iterations succeeded. Stability estimates may be "
+                    f"unreliable."
+                )
+
+            # === Step 5: Frequency-based filtering ===
+            self.bootstrap_frequencies_ = (
+                rule_selection_count / n_successful_boots
+            )
+            self.stable_mask_ = (
+                self.bootstrap_frequencies_ >= self.rule_threshold
             )
 
-        X_stable = X_all[:, self.stable_mask_]
-        w_stable = inv_sqrt_w[self.stable_mask_]
-        X_stable_weighted = X_stable.multiply(w_stable)
+            # Force-include ONLY confirmatory rules (optional must earn it)
+            for i, cat in enumerate(expert_categories):
+                if cat == "confirmatory":
+                    self.stable_mask_[n_auto_features + i] = True
 
-        self.final_model_ = _make_logistic_cv(
-            l1_ratios=self.l1_ratios,
-            cv=5,
-            random_state=self._BASE_SEED,
-            tol=self.tol,
-            max_iter=10000,
-            n_jobs=self.n_jobs,
-        )
-        self.final_model_.fit(X_stable_weighted, y)
-
-        self.stable_inv_sqrt_w_ = w_stable
-        self.n_stable_rules_ = int(self.stable_mask_.sum())
-        self.n_auto_features_ = n_auto_features
-        self.n_expert_ = n_expert
-
-        # === Step 7: Verify + enforce confirmatory rules ===
-        self._verify_confirmatory()
-
-        if not self.confirmatory_all_active_ and confirmatory_rules:
-            warnings.warn(
-                "Some confirmatory rules were zeroed by the solver. "
-                "Executing post-hoc constrained refit to enforce inclusion."
+            logger.info(
+                "Step 5: %d/%d features survived bootstrap (threshold=%.0f%%)",
+                self.stable_mask_.sum(),
+                n_total_features,
+                self.rule_threshold * 100,
             )
-            self._refit_with_confirmatory(X_all, y, inv_sqrt_w)
+
+            # === Step 6: Final fit on stable features ===
+            if self.stable_mask_.sum() == 0:
+                raise RuntimeError(
+                    "No features survived bootstrap filtering. Consider "
+                    "lowering rule_threshold or increasing n_bootstrap."
+                )
+
+            X_stable = X_all[:, self.stable_mask_]
+            w_stable = inv_sqrt_w[self.stable_mask_]
+            X_stable_weighted = X_stable.multiply(w_stable)
+
+            self.final_model_ = _make_logistic_cv(
+                l1_ratios=self.l1_ratios,
+                cv=5,
+                random_state=self._BASE_SEED,
+                tol=self.tol,
+                max_iter=10000,
+                n_jobs=inner_n_jobs,
+            )
+            self.final_model_.fit(X_stable_weighted, y)
+
+            self.stable_inv_sqrt_w_ = w_stable
+            self.n_stable_rules_ = int(self.stable_mask_.sum())
+            self.n_auto_features_ = n_auto_features
+            self.n_expert_ = n_expert
+
+            # === Step 7: Verify + enforce confirmatory rules ===
             self._verify_confirmatory()
 
-            if not self.confirmatory_all_active_:
+            if not self.confirmatory_all_active_ and confirmatory_rules:
                 warnings.warn(
-                    "COMPLIANCE WARNING: Confirmatory rules could not be "
-                    "activated even after constrained refit. This may indicate "
-                    "perfect collinearity or degenerate data for these rules."
+                    "Some confirmatory rules were zeroed by the solver. "
+                    "Executing post-hoc constrained refit to enforce "
+                    "inclusion."
                 )
+                self._refit_with_confirmatory(X_all, y, inv_sqrt_w)
+                self._verify_confirmatory()
 
-        # === Step 8 (optional): Post-hoc probability calibration ===
-        self.calibrator_ = None
-        if self.calibration is not None:
-            valid = ("isotonic", "sigmoid")
-            if self.calibration not in valid:
-                raise ValueError(
-                    f"calibration must be one of {valid}, got '{self.calibration}'"
+                if not self.confirmatory_all_active_:
+                    warnings.warn(
+                        "COMPLIANCE WARNING: Confirmatory rules could not "
+                        "be activated even after constrained refit. This "
+                        "may indicate perfect collinearity or degenerate "
+                        "data for these rules."
+                    )
+
+            # === Step 8 (optional): Post-hoc probability calibration ===
+            self.calibrator_ = None
+            if self.calibration is not None:
+                valid = ("isotonic", "sigmoid")
+                if self.calibration not in valid:
+                    raise ValueError(
+                        f"calibration must be one of {valid}, "
+                        f"got '{self.calibration}'"
+                    )
+                from sklearn.calibration import CalibratedClassifierCV
+
+                logger.info(
+                    "Step 8: Post-hoc calibration (method=%s)",
+                    self.calibration,
                 )
-            from sklearn.calibration import CalibratedClassifierCV
-
-            logger.info("Step 8: Post-hoc calibration (method=%s)", self.calibration)
-            self.calibrator_ = CalibratedClassifierCV(
-                self.final_model_,
-                method=self.calibration,
-                cv=5,
-            )
-            X_stable_weighted = X_all[:, self.stable_mask_].multiply(
-                inv_sqrt_w[self.stable_mask_]
-            )
-            self.calibrator_.fit(X_stable_weighted, y)
+                self.calibrator_ = CalibratedClassifierCV(
+                    self.final_model_,
+                    method=self.calibration,
+                    cv=5,
+                )
+                X_stable_weighted = X_all[:, self.stable_mask_].multiply(
+                    inv_sqrt_w[self.stable_mask_]
+                )
+                self.calibrator_.fit(X_stable_weighted, y)
 
         return self
 

@@ -38,6 +38,7 @@ dependencies = [
     "joblib>=1.0",
     "imodels>=1.3",
     "packaging>=20.0",
+    "threadpoolctl>=3.0",
 ]
 
 [project.optional-dependencies]
