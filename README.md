@@ -21,6 +21,8 @@ ExpertRuleFit replaces Lasso with a **deterministic-by-design** pipeline:
 
 Guaranteed reproducible within a deterministic execution envelope: **pinned dependency versions, single-threaded BLAS/OpenMP, fixed random seeds, validated input schema with stable feature order, and consistent platform/runtime settings ⇒ identical rule set and identical predictions**.
 
+> **Container deployment:** For a step-by-step guide to enforcing this guarantee via Docker (pinned digests, locked wheels, deterministic numerics, schema validation, auditable fingerprints), see **[docs/REPRODUCIBILITY_CONTAINERS.md](docs/REPRODUCIBILITY_CONTAINERS.md)**.
+
 ## Validation Results
 
 Benchmarked on **3 credit scoring datasets** with **100 random seeds** each:
@@ -275,6 +277,7 @@ tests/
     test_dual_model.py       # DualModel tests (4 tests)
 docs/
     SOTA.md                  # State-of-the-art survey (2023--2026)
+    REPRODUCIBILITY_CONTAINERS.md  # Container-based reproducibility guide
 output/                      # Benchmark results (figures, CSVs, report)
 ```
 
