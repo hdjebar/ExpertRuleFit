@@ -230,6 +230,7 @@ class EBMRuleExtractor:
             score_values = scores
 
         rules = []
+        rule_names_seen = set()
 
         # --- Strategy 1: Sign changes ---
         for i in range(len(score_values) - 1):
@@ -255,6 +256,7 @@ class EBMRuleExtractor:
                         def _eval(X, fn, t=_thresh, fi=_fidx):
                             return (X[:, fi] <= t).astype(np.float64)
 
+                    rule_names_seen.add(rule_name)
                     rules.append(ExtractedRule(
                         name=rule_name,
                         description=(
@@ -278,10 +280,11 @@ class EBMRuleExtractor:
                     threshold = float(bin_edges[i])
                     direction = ">" if score_values[i + 1] > score_values[i] else "<="
 
-                    # Avoid duplicating sign-change rules
+                    # Avoid duplicating sign-change rules (O(1) set lookup)
                     candidate_name = f"EBM:{feat_name} {direction} {threshold:.4f}"
-                    if any(r.name == candidate_name for r in rules):
+                    if candidate_name in rule_names_seen:
                         continue
+                    rule_names_seen.add(candidate_name)
 
                     _thresh = threshold
                     _fidx = feat_idx
@@ -495,7 +498,7 @@ class DualGlassBox(BaseEstimator, ClassifierMixin):
 
         from .expert_rulefit import ExpertRuleFit
 
-        X = np.asarray(X, dtype=np.float64)
+        X = np.asarray(X, dtype=np.float64, copy=False)
         y = np.asarray(y, dtype=np.float64).ravel()
 
         if feature_names is None:
@@ -630,7 +633,7 @@ class DualGlassBox(BaseEstimator, ClassifierMixin):
         check_is_fitted(self, ["ebm_"])
         import pandas as pd
 
-        X = np.asarray(X, dtype=np.float64)
+        X = np.asarray(X, dtype=np.float64, copy=False)
         df = pd.DataFrame(X, columns=self.feature_names_)
         return self.ebm_.predict_proba(df)
 
@@ -673,7 +676,7 @@ class DualGlassBox(BaseEstimator, ClassifierMixin):
         check_is_fitted(self, ["ebm_"])
         import pandas as pd
 
-        X = np.asarray(X, dtype=np.float64)
+        X = np.asarray(X, dtype=np.float64, copy=False)
         df = pd.DataFrame(X, columns=self.feature_names_)
         return self.ebm_.explain_local(df, y)
 
