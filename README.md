@@ -1,8 +1,8 @@
 # ExpertRuleFit
 
-**Reproducible interpretable ML for regulated banking environments.**
+**Reproducible interpretable ML for regulated banking environments — EBM-grounded rules that survive any regularization.**
 
-ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility, plus **confirmatory rules** that survive any regularization strength. Built for banking compliance under CSSF/EU AI Act.
+ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility, plus **confirmatory rules** that survive any regularization strength. Integrates with [InterpretML](https://github.com/interpretml/interpret) Explainable Boosting Machines (EBM) to auto-discover interaction rules grounded in shape functions. Built for banking compliance under CSSF/EU AI Act.
 
 ## The Problem
 
@@ -115,6 +115,97 @@ explanations = dm.explain(X_test[:1])
 
 **Architecture:** `Features → EBM(p_ebm) + ExpertRuleFit(p_erf) → LogisticRegression → final_score`. Every layer is interpretable — no post-hoc approximations. Cross-validated OOF predictions prevent stacking overfitting.
 
+## Prediction & Classification
+
+ExpertRuleFit is a **binary classifier** (classes {0, 1}). It outputs both hard labels and calibrated probabilities via logistic regression.
+
+### How Prediction Works
+
+```
+Training data
+  → Fixed-seed RuleFit (candidate rules + linear features)
+  → Append expert rules (confirmatory / optional)
+  → Bootstrap × ElasticNetCV (stability filtering)
+  → Final LogisticRegressionCV on stable features
+  → Logistic sigmoid → calibrated P(y=1)
+```
+
+### predict() — Hard Class Labels
+
+```python
+erf = ExpertRuleFit(max_rules=50)
+erf.fit(X_train, y_train, feature_names=fn)
+
+y_pred = erf.predict(X_test)  # array of {0, 1}
+```
+
+### predict_proba() — Calibrated Probabilities
+
+```python
+proba = erf.predict_proba(X_test)  # shape (n_samples, 2)
+p_default = proba[:, 1]            # P(y=1) — e.g., probability of default
+```
+
+Probabilities are **calibrated** (true logistic outputs, not post-hoc). Each row sums to 1.0. Use `proba[:, 1]` for AUC, ranking, and threshold tuning.
+
+### Custom Decision Threshold
+
+The default threshold is 0.5. For cost-sensitive applications (e.g., credit scoring where false negatives are costly), adjust:
+
+```python
+threshold = 0.3  # more conservative — catches more positives
+y_custom = (erf.predict_proba(X_test)[:, 1] >= threshold).astype(int)
+```
+
+### Inspecting What Drives Predictions
+
+```python
+# Global: top rules by |coefficient|
+for r in erf.get_rule_importance()[:5]:
+    print(f"coef={r['coefficient']:+.4f} [{r['category']}] {r['name']}")
+
+# Bootstrap stability of each rule
+print(erf.bootstrap_frequencies_)
+
+# Full model summary (rules, confirmatory status, importance)
+erf.summary()
+```
+
+### DualModel — Stacked Prediction with Explanations
+
+```python
+from expertrulefit import DualModel
+
+dm = DualModel()
+dm.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
+
+proba = dm.predict_proba(X_test)[:, 1]
+
+# Per-sample explanation: EBM contributions + active rules + meta-weights
+explanations = dm.explain(X_test[:1], top_n=5)
+exp = explanations[0]
+print(f"Final P(y=1): {exp['final_score']:.4f}")
+print(f"EBM score:    {exp['ebm_score']:.4f}")
+print(f"ERF score:    {exp['erf_score']:.4f}")
+```
+
+### Feature Matrix Structure
+
+Internally, the final logistic regression operates on an augmented feature matrix:
+
+```
+[linear:feat_0, ..., linear:feat_n, rule_1, ..., rule_k, confirmatory:..., optional:...]
+```
+
+The prediction is: `P(y=1) = sigmoid(intercept + sum(coef_j * feature_j))`
+
+- **Linear features**: one per input column (continuous contribution)
+- **Rules**: binary {0, 1} from tree-extracted conditions (e.g., `X_3 > 0.4 and X_4 <= 0.15`)
+- **Confirmatory**: regulatory rules with near-zero penalty (guaranteed active)
+- **Optional**: analyst rules with reduced penalty (may be eliminated)
+
+> See `examples/prediction_basics.py`, `examples/classification_with_rules.py`, and `examples/prediction_inspection.py` for runnable demonstrations.
+
 ## Two Guarantees
 
 1. **Reproducibility** — same data → same rules → same predictions (100/100 seeds)
@@ -169,12 +260,17 @@ expertrulefit/
     dual_model.py            # DualModel: EBM + ExpertRuleFit stacking
 expertrulefit_validation.py  # Full benchmark (3 datasets × 100 seeds)
 examples/
-    quick_demo.py            # Quick 10-seed reproducibility demo
-    ebm_pipeline.py          # EBM → ExpertRuleFit pipeline demo
-    dual_model_demo.py       # Full dual architecture demo
+    quick_demo.py                # Quick 10-seed reproducibility demo
+    ebm_pipeline.py              # EBM → ExpertRuleFit pipeline demo
+    dual_model_demo.py           # Full dual architecture demo
+    prediction_basics.py         # predict() and predict_proba() usage
+    classification_with_rules.py # Confirmatory + optional rule effects
+    prediction_inspection.py     # Rule importance, per-sample explanation
 tests/
     test_expert_rulefit.py   # ExpertRuleFit tests (9 tests)
     test_dual_model.py       # DualModel tests (4 tests)
+docs/
+    SOTA.md                  # State-of-the-art survey (2023--2026)
 output/                      # Benchmark results (figures, CSVs, report)
 ```
 
@@ -212,6 +308,15 @@ that makes standard RuleFit non-reproducible.
 | BCBS 239 Principle 3 | Accuracy & integrity | Verifiable results across re-executions |
 | CSSF Circular 12/552 | Model governance | Regulator can re-execute and obtain identical output |
 
+## State of the Art
+
+For a comprehensive survey of recent research (2023--2026) on RuleFit extensions, competing rule-based methods, stability techniques, Rashomon sets, regulatory AI, and how ExpertRuleFit is positioned relative to the field, see **[docs/SOTA.md](docs/SOTA.md)**.
+
+**Key findings:**
+- **Closest competitors:** SIRUS (stability), FIRE/CRE (sparsity), Stability Selection (bootstrap filtering) — none combine all four of ExpertRuleFit's components
+- **Unique niche:** No existing method integrates RuleFit rule generation + bootstrap stability selection + weighted regularization for confirmatory rules + EBM interaction discovery
+- **Regulatory window:** ECB July 2025 Guide to Internal Models + EU AI Act Aug 2026 applicability align directly with ExpertRuleFit's design goals
+
 ## References
 
 1. Friedman & Popescu (2008) — *Predictive Learning via Rule Ensembles*, Annals of Applied Statistics
@@ -219,6 +324,11 @@ that makes standard RuleFit non-reproducible.
 3. Singh et al. (2021) — *imodels: a python package for fitting interpretable models*, JOSS
 4. Zou (2006) — *The Adaptive LASSO and Its Oracle Properties*, JASA
 5. Nori et al. (2019) — *InterpretML: A Unified Framework for Machine Learning Interpretability*, arXiv:1909.09223
+6. Benard et al. (2021) — *SIRUS: Stable and Interpretable RUle Sets*, EJS
+7. Liu & Mazumder (2023) — *FIRE: Fast Interpretable Rule Extraction*, KDD
+8. Nalenz & Augustin (2022) — *Compressed Rule Ensembles*, AISTATS
+9. Meinshausen & Bühlmann (2010) — *Stability Selection*, JRSS-B
+10. Rudin et al. (2024) — *Amazing Things Come From Having Many Good Models*, ICML
 
 ## License
 

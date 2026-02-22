@@ -95,19 +95,27 @@ def test_get_rule_importance(credit_data):
         assert "name" in r
         assert "coefficient" in r
         assert "abs_importance" in r
+        assert "bootstrap_frequency" in r
+        assert "category" in r
 
 
 def test_summary(credit_data, capsys):
-    """Test summary output."""
+    """Test summary output (print and return_string modes)."""
     X, y, fn = credit_data
 
     erf = ExpertRuleFit(max_rules=20, n_bootstrap=3)
     erf.fit(X, y, feature_names=fn)
 
+    # Test print mode
     erf.summary()
     captured = capsys.readouterr()
     assert "ExpertRuleFit" in captured.out
     assert "Stable features" in captured.out
+
+    # Test return_string mode
+    text = erf.summary(return_string=True)
+    assert isinstance(text, str)
+    assert "ExpertRuleFit" in text
 
 
 def test_stable_mask(credit_data):
@@ -174,7 +182,7 @@ def test_confirmatory_summary(credit_data, capsys):
 
 
 def test_optional_rules(credit_data):
-    """Test that optional rules are supported but can be eliminated."""
+    """Test that optional rules are supported but can be eliminated by bootstrap."""
     X, y, fn = credit_data
 
     optional = [
@@ -187,12 +195,43 @@ def test_optional_rules(credit_data):
     erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
     erf.fit(X, y, feature_names=fn, optional_rules=optional)
 
-    # Optional rule should be in stable mask (force-included)
+    # Optional rule is registered (but may or may not survive bootstrap)
     assert hasattr(erf, "n_expert_")
     assert erf.n_expert_ == 1
 
     proba = erf.predict_proba(X)
     assert proba.shape == (X.shape[0], 2)
+
+
+def test_bootstrap_frequencies(credit_data):
+    """Test that bootstrap_frequencies_ is properly set after fit."""
+    X, y, fn = credit_data
+
+    erf = ExpertRuleFit(max_rules=20, n_bootstrap=5, rule_threshold=0.8)
+    erf.fit(X, y, feature_names=fn)
+
+    assert hasattr(erf, "bootstrap_frequencies_")
+    assert len(erf.bootstrap_frequencies_) > 0
+    assert np.all(erf.bootstrap_frequencies_ >= 0)
+    assert np.all(erf.bootstrap_frequencies_ <= 1)
+
+
+def test_input_validation():
+    """Test that invalid inputs raise proper errors."""
+    erf = ExpertRuleFit()
+
+    # Mismatched X and y
+    with pytest.raises(ValueError, match="incompatible shapes"):
+        erf.fit(np.ones((10, 3)), np.ones(5))
+
+    # Non-binary y
+    with pytest.raises(ValueError, match="binary"):
+        erf.fit(np.ones((10, 3)), np.array([0, 1, 2, 0, 1, 2, 0, 1, 2, 0]).astype(float))
+
+    # Invalid rule_threshold
+    erf_bad = ExpertRuleFit(rule_threshold=0)
+    with pytest.raises(ValueError, match="rule_threshold"):
+        erf_bad.fit(np.ones((10, 3)), np.array([0, 1, 0, 1, 0, 1, 0, 1, 0, 1]).astype(float))
 
 
 if __name__ == "__main__":
