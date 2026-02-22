@@ -1,8 +1,8 @@
 # ExpertRuleFit
 
-**Reproducible interpretable ML for regulated banking environments.**
+**Reproducible interpretable ML for regulated banking environments — EBM-grounded rules that survive any regularization.**
 
-ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility, plus **confirmatory rules** that survive any regularization strength. Built for banking compliance under CSSF/EU AI Act.
+ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility, plus **confirmatory rules** that survive any regularization strength. Integrates with [InterpretML](https://github.com/interpretml/interpret) Explainable Boosting Machines (EBM) to auto-discover interaction rules grounded in shape functions. Built for banking compliance under CSSF/EU AI Act.
 
 ## The Problem
 
