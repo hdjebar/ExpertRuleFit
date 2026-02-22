@@ -269,6 +269,8 @@ examples/
 tests/
     test_expert_rulefit.py   # ExpertRuleFit tests (9 tests)
     test_dual_model.py       # DualModel tests (4 tests)
+docs/
+    SOTA.md                  # State-of-the-art survey (2023--2026)
 output/                      # Benchmark results (figures, CSVs, report)
 ```
 
@@ -306,6 +308,15 @@ that makes standard RuleFit non-reproducible.
 | BCBS 239 Principle 3 | Accuracy & integrity | Verifiable results across re-executions |
 | CSSF Circular 12/552 | Model governance | Regulator can re-execute and obtain identical output |
 
+## State of the Art
+
+For a comprehensive survey of recent research (2023--2026) on RuleFit extensions, competing rule-based methods, stability techniques, Rashomon sets, regulatory AI, and how ExpertRuleFit is positioned relative to the field, see **[docs/SOTA.md](docs/SOTA.md)**.
+
+**Key findings:**
+- **Closest competitors:** SIRUS (stability), FIRE/CRE (sparsity), Stability Selection (bootstrap filtering) — none combine all four of ExpertRuleFit's components
+- **Unique niche:** No existing method integrates RuleFit rule generation + bootstrap stability selection + weighted regularization for confirmatory rules + EBM interaction discovery
+- **Regulatory window:** ECB July 2025 Guide to Internal Models + EU AI Act Aug 2026 applicability align directly with ExpertRuleFit's design goals
+
 ## References
 
 1. Friedman & Popescu (2008) — *Predictive Learning via Rule Ensembles*, Annals of Applied Statistics
@@ -313,6 +324,11 @@ that makes standard RuleFit non-reproducible.
 3. Singh et al. (2021) — *imodels: a python package for fitting interpretable models*, JOSS
 4. Zou (2006) — *The Adaptive LASSO and Its Oracle Properties*, JASA
 5. Nori et al. (2019) — *InterpretML: A Unified Framework for Machine Learning Interpretability*, arXiv:1909.09223
+6. Benard et al. (2021) — *SIRUS: Stable and Interpretable RUle Sets*, EJS
+7. Liu & Mazumder (2023) — *FIRE: Fast Interpretable Rule Extraction*, KDD
+8. Nalenz & Augustin (2022) — *Compressed Rule Ensembles*, AISTATS
+9. Meinshausen & Bühlmann (2010) — *Stability Selection*, JRSS-B
+10. Rudin et al. (2024) — *Amazing Things Come From Having Many Good Models*, ICML
 
 ## License
 
