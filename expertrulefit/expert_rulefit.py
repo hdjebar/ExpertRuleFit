@@ -61,6 +61,14 @@ _RULE_PATTERN = re.compile(
     r"X_(\d+)\s*(<=|>=|<|>)\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)"
 )
 
+# Vectorized comparison operators keyed by string token
+_OPERATORS = {
+    "<=": np.less_equal,
+    ">=": np.greater_equal,
+    "<": np.less,
+    ">": np.greater,
+}
+
 
 def eval_rule_on_data(rule_str, X):
     """Evaluate a rule string robustly using regex.
@@ -81,13 +89,6 @@ def eval_rule_on_data(rule_str, X):
     """
     n = X.shape[0]
     result = np.ones(n, dtype=bool)
-
-    _OPS = {
-        "<=": np.less_equal,
-        ">=": np.greater_equal,
-        "<": np.less,
-        ">": np.greater,
-    }
 
     for cond in rule_str.split(" and "):
         match = _RULE_PATTERN.search(cond)
@@ -110,7 +111,7 @@ def eval_rule_on_data(rule_str, X):
         if sparse.issparse(X):
             col_data = np.asarray(col_data.todense()).ravel()
 
-        result &= _OPS[operator](col_data, threshold)
+        result &= _OPERATORS[operator](col_data, threshold)
 
     return result.astype(np.float64)
 
@@ -136,6 +137,7 @@ def build_rule_feature_matrix(rulefit_model, X):
     -------
     X_augmented : sparse CSR matrix of shape (n_samples, n_features + n_rules)
     """
+    X = np.asarray(X, dtype=np.float64)
     rules_no_fn = rulefit_model.rules_without_feature_names_
 
     if not rules_no_fn:
@@ -282,11 +284,17 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
     def _validate_inputs(self, X, y):
         """Validate inputs and hyperparameters before fitting."""
+        if X.ndim != 2:
+            raise ValueError(f"X must be 2-dimensional, got shape {X.shape}")
+        if y.ndim != 1:
+            raise ValueError(f"y must be 1-dimensional, got shape {y.shape}")
         if X.shape[0] != y.shape[0]:
             raise ValueError(
                 f"X and y have incompatible shapes: "
                 f"X has {X.shape[0]} samples, y has {y.shape[0]}"
             )
+        if X.shape[0] == 0:
+            raise ValueError("X must have at least one sample")
 
         unique_classes = np.unique(y)
         if not np.array_equal(unique_classes, np.array([0.0, 1.0])):
@@ -730,14 +738,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 continue
 
             name = self.rule_names_[idx]
-            if name.startswith("confirmatory:"):
-                category = "confirmatory"
-            elif name.startswith("optional:"):
-                category = "optional"
-            elif name.startswith("linear:"):
-                category = "linear"
-            else:
-                category = "rule"
+            category = _rule_category(name)
 
             rules.append({
                 "name": name,
@@ -834,7 +835,6 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 rule_str = str(rule)
                 names.append(f"rule[{i}]:{rule_str}")
 
-        # Pad if needed (shouldn't happen, but defensive)
         while len(names) < n_features:
             names.append(f"rule:unknown_{len(names)}")
 
@@ -849,6 +849,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             self.confirmatory_all_active_ = True
             return
 
+        # Build a lookup: rule name → position in stable feature set
         stable_indices = np.where(self.stable_mask_)[0]
         true_coefs = self._get_true_coefficients()
 
@@ -868,3 +869,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 all_active = False
 
         self.confirmatory_all_active_ = all_active
+
+
+def _rule_category(name):
+    """Determine the category of a rule from its prefixed name."""
+    if name.startswith("confirmatory:"):
+        return "confirmatory"
+    if name.startswith("optional:"):
+        return "optional"
+    if name.startswith("linear:"):
+        return "linear"
+    return "rule"
