@@ -206,7 +206,7 @@ class DualModel(BaseEstimator, ClassifierMixin):
         check_is_fitted(self, ["ebm_", "erf_", "meta_model_"])
         import pandas as pd
 
-        X = np.asarray(X, dtype=np.float64)
+        X = np.asarray(X, dtype=np.float64, copy=False)
         df = pd.DataFrame(X, columns=self.feature_names_)
 
         p_ebm = self.ebm_.predict_proba(df)[:, 1]
@@ -238,7 +238,7 @@ class DualModel(BaseEstimator, ClassifierMixin):
         check_is_fitted(self, ["ebm_", "erf_", "meta_model_"])
         import pandas as pd
 
-        X = np.asarray(X, dtype=np.float64)
+        X = np.asarray(X, dtype=np.float64, copy=False)
         df = pd.DataFrame(X, columns=self.feature_names_)
 
         p_ebm = self.ebm_.predict_proba(df)[:, 1]
@@ -252,6 +252,16 @@ class DualModel(BaseEstimator, ClassifierMixin):
         # ExpertRuleFit rule importance (global — same for all samples)
         erf_importance = self.erf_.get_rule_importance()
 
+        # Precompute ERF matrix once for all samples (vectorized)
+        stable_indices = np.where(self.erf_.stable_mask_)[0]
+        true_coefs = self.erf_._get_true_coefficients()
+        X_pred_all = self.erf_._build_predict_matrix(X)
+
+        # Precompute active coefficient mask
+        active_coef_mask = np.zeros(len(true_coefs), dtype=bool)
+        for j in range(len(true_coefs)):
+            active_coef_mask[j] = abs(true_coefs[j]) > 1e-10
+
         explanations = []
         for i in range(X.shape[0]):
             # EBM: extract per-feature contributions for this sample
@@ -261,22 +271,16 @@ class DualModel(BaseEstimator, ClassifierMixin):
 
             # Sort by absolute contribution, take top_n
             order = np.argsort(np.abs(ebm_scores))[::-1]
-            ebm_contribs = []
-            for j in order[:top_n]:
-                ebm_contribs.append({
-                    "feature": ebm_names[j],
-                    "contribution": float(ebm_scores[j]),
-                })
+            ebm_contribs = [
+                {"feature": ebm_names[j], "contribution": float(ebm_scores[j])}
+                for j in order[:top_n]
+            ]
 
-            # ERF: find which rules are active for this sample
+            # ERF: find which rules are active for this sample (no recomputation)
             erf_active = []
-            stable_indices = np.where(self.erf_.stable_mask_)[0]
-            true_coefs = self.erf_._get_true_coefficients()
-            X_pred = self.erf_._build_predict_matrix(X[i:i+1])
-
             for j, idx in enumerate(stable_indices):
-                if j < len(true_coefs) and abs(true_coefs[j]) > 1e-10:
-                    if abs(X_pred[0, j]) > 1e-10:  # feature is active for this sample
+                if j < len(true_coefs) and active_coef_mask[j]:
+                    if abs(X_pred_all[i, j]) > 1e-10:
                         name = self.erf_.rule_names_[idx]
                         category = "confirmatory" if name.startswith("confirmatory:") else \
                                    "optional" if name.startswith("optional:") else "auto"

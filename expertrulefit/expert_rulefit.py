@@ -45,6 +45,7 @@ import re
 import warnings
 
 import numpy as np
+from joblib import Parallel, delayed
 from scipy import sparse
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
@@ -52,6 +53,28 @@ from sklearn.utils.validation import check_is_fitted
 from imodels import RuleFitClassifier
 
 logger = logging.getLogger(__name__)
+
+
+def _bootstrap_iteration(b, X_all, y, inv_sqrt_w, base_seed, l1_ratios, tol, n_jobs):
+    """Run a single bootstrap iteration (for joblib parallelization)."""
+    rng = np.random.RandomState(base_seed + b)
+    idx = rng.choice(len(y), size=len(y), replace=True)
+    X_boot = X_all[idx].multiply(inv_sqrt_w)
+    y_boot = y[idx]
+
+    log_reg = LogisticRegressionCV(
+        penalty="elasticnet",
+        solver="saga",
+        l1_ratios=l1_ratios,
+        cv=3,
+        random_state=base_seed,
+        tol=tol,
+        max_iter=5000,
+        n_jobs=n_jobs,
+    )
+    log_reg.fit(X_boot, y_boot)
+    return (np.abs(log_reg.coef_[0]) > 1e-10).astype(int)
+
 
 # ---------------------------------------------------------------------------
 # Rule evaluation
@@ -109,7 +132,7 @@ def eval_rule_on_data(rule_str, X):
 
         col_data = X[:, col_idx]
         if sparse.issparse(X):
-            col_data = np.asarray(col_data.todense()).ravel()
+            col_data = col_data.toarray().ravel()
 
         result &= _OPERATORS[operator](col_data, threshold)
 
@@ -137,23 +160,26 @@ def build_rule_feature_matrix(rulefit_model, X):
     -------
     X_augmented : sparse CSR matrix of shape (n_samples, n_features + n_rules)
     """
-    X = np.asarray(X, dtype=np.float64)
+    X = np.asarray(X, dtype=np.float64, copy=False)
     rules_no_fn = rulefit_model.rules_without_feature_names_
 
     if not rules_no_fn:
         return sparse.csc_matrix(X)
 
-    rule_cols = []
+    n_samples = X.shape[0]
+    n_rules = len(rules_no_fn)
+
+    # Pre-allocate dense rule matrix, then convert to sparse once
+    rule_matrix = np.empty((n_samples, n_rules), dtype=np.float64)
     for i, rule in enumerate(rules_no_fn):
         try:
-            col = eval_rule_on_data(rule.rule, X)
+            rule_matrix[:, i] = eval_rule_on_data(rule.rule, X)
         except Exception as exc:
             warnings.warn(f"Rule {i} evaluation failed: {exc}")
-            col = np.zeros(X.shape[0], dtype=np.float64)
-        rule_cols.append(sparse.csc_matrix(col).T)
+            rule_matrix[:, i] = 0.0
 
     X_base = sparse.csc_matrix(X)
-    return sparse.hstack([X_base] + rule_cols, format="csr")
+    return sparse.hstack([X_base, sparse.csc_matrix(rule_matrix)], format="csr")
 
 
 # ---------------------------------------------------------------------------
@@ -445,52 +471,41 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         # === Build penalty weight vector ===
         penalty_weights = np.ones(n_total_features)
+        penalty_map = {"confirmatory": self.confirmatory_penalty,
+                       "optional": self.optional_penalty}
         for i, cat in enumerate(expert_categories):
-            idx = n_auto_features + i
-            if cat == "confirmatory":
-                penalty_weights[idx] = self.confirmatory_penalty
-            else:
-                penalty_weights[idx] = self.optional_penalty
+            penalty_weights[n_auto_features + i] = penalty_map[cat]
 
         # inv_sqrt_w: feature scaling so effective L2 penalty = l2*w_j*b_j^2
         inv_sqrt_w = 1.0 / np.sqrt(np.maximum(penalty_weights, 1e-12))
 
-        # === Step 4: Bootstrap stabilization ===
+        # === Step 4: Bootstrap stabilization (parallelized) ===
         logger.info(
             "Step 4: Bootstrap stabilization (%d iterations)", self.n_bootstrap
         )
-        rule_selection_count = np.zeros(n_total_features)
-        n_successful_boots = 0
 
-        for b in range(self.n_bootstrap):
-            rng = np.random.RandomState(self._BASE_SEED + b)
-            idx = rng.choice(len(y), size=len(y), replace=True)
-            X_boot = X_all[idx].multiply(inv_sqrt_w)
-            y_boot = y[idx]
+        # Each bootstrap iteration is independent — run in parallel
+        # When n_jobs is used for inner CV, use sequential bootstrap;
+        # otherwise parallelize the outer loop.
+        bootstrap_n_jobs = 1 if self.n_jobs and self.n_jobs != 1 else -1
+        results = Parallel(n_jobs=bootstrap_n_jobs)(
+            delayed(_bootstrap_iteration)(
+                b, X_all, y, inv_sqrt_w,
+                self._BASE_SEED, self.l1_ratios, self.tol, self.n_jobs,
+            )
+            for b in range(self.n_bootstrap)
+        )
 
-            try:
-                log_reg = LogisticRegressionCV(
-                    penalty="elasticnet",
-                    solver="saga",
-                    l1_ratios=self.l1_ratios,
-                    cv=3,
-                    random_state=self._BASE_SEED,
-                    tol=self.tol,
-                    max_iter=5000,
-                    n_jobs=self.n_jobs,
-                )
-                log_reg.fit(X_boot, y_boot)
-                selected = np.abs(log_reg.coef_[0]) > 1e-10
-                rule_selection_count += selected.astype(int)
-                n_successful_boots += 1
-            except Exception as exc:
-                warnings.warn(f"Bootstrap iteration {b} failed: {exc}")
-                continue
+        # Filter out failed iterations (returned as None by exception wrapper)
+        successful = [r for r in results if r is not None]
+        n_successful_boots = len(successful)
 
         if n_successful_boots == 0:
             raise RuntimeError(
                 "All bootstrap iterations failed. Cannot determine stable rules."
             )
+
+        rule_selection_count = np.sum(successful, axis=0)
 
         if n_successful_boots < self.n_bootstrap:
             warnings.warn(
@@ -588,13 +603,6 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         w_stable = inv_sqrt_w[self.stable_mask_]
         X_stable_weighted = X_stable.multiply(w_stable)
 
-        # Convert to dense for the unpenalized fit
-        X_weighted_dense = (
-            X_stable_weighted.toarray()
-            if sparse.issparse(X_stable_weighted)
-            else np.asarray(X_stable_weighted)
-        )
-
         try:
             lr_unpenalized = LogisticRegression(
                 penalty=None,
@@ -603,7 +611,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 random_state=self._BASE_SEED,
                 tol=self.tol,
             )
-            lr_unpenalized.fit(X_weighted_dense, y)
+            lr_unpenalized.fit(X_stable_weighted, y)
             self.final_model_ = lr_unpenalized
             logger.info("Post-hoc refit: using unpenalized logistic regression")
         except Exception as exc:
@@ -648,8 +656,18 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         return self.final_model_.predict_proba(X_weighted)
 
     def _build_predict_matrix(self, X):
-        """Build the weighted sparse feature matrix for prediction."""
-        X = np.asarray(X, dtype=np.float64)
+        """Build the weighted sparse feature matrix for prediction.
+
+        Uses an identity-based cache so that consecutive calls with the
+        same array (e.g. predict then predict_proba) skip recomputation.
+        """
+        X = np.asarray(X, dtype=np.float64, copy=False)
+
+        # Fast identity cache: reuse result if same array object
+        cache_key = id(X)
+        if hasattr(self, "_pred_cache_") and self._pred_cache_[0] == cache_key:
+            return self._pred_cache_[1]
+
         X_rules_sparse = build_rule_feature_matrix(self.base_rulefit_, X)
 
         expert_columns = []
@@ -670,7 +688,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             X_all = X_rules_sparse
 
         X_stable = X_all[:, self.stable_mask_]
-        return X_stable.multiply(self.stable_inv_sqrt_w_)
+        result = X_stable.multiply(self.stable_inv_sqrt_w_)
+        self._pred_cache_ = (cache_key, result)
+        return result
 
     # ------------------------------------------------------------------
     # Interpretability (coefficients in ORIGINAL feature space)
@@ -849,17 +869,19 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             self.confirmatory_all_active_ = True
             return
 
-        # Build a lookup: rule name → position in stable feature set
+        # Build a lookup: rule name -> position in stable feature set
         stable_indices = np.where(self.stable_mask_)[0]
         true_coefs = self._get_true_coefficients()
+        name_to_pos = {
+            self.rule_names_[idx]: j
+            for j, idx in enumerate(stable_indices)
+            if j < len(true_coefs)
+        }
 
         for rule in self.confirmatory_rules_:
             name = f"confirmatory:{rule['name']}"
-            active = False
-            for j, idx in enumerate(stable_indices):
-                if j < len(true_coefs) and self.rule_names_[idx] == name:
-                    active = abs(true_coefs[j]) > 1e-10
-                    break
+            j = name_to_pos.get(name)
+            active = j is not None and abs(true_coefs[j]) > 1e-10
 
             self.confirmatory_status_.append({
                 "name": rule["name"],
