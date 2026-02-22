@@ -80,7 +80,7 @@ assert erf.confirmatory_all_active_, "COMPLIANCE FAILURE: confirmatory rule elim
 erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 ```
 
-**How it works:** confirmatory rules get near-zero regularization penalty (1e-8 vs 1.0), making it mathematically impossible for Elastic Net to eliminate them. This is implemented via feature scaling: `X_j * 1/sqrt(w_j)` where `w_j ~ 0`.
+**How it works:** confirmatory rules get near-zero penalty weight (`w_j = 1e-8` vs `1.0` for auto rules). Feature scaling `X_j * 1/sqrt(w_j)` reduces the effective L1 penalty by `sqrt(w_j) = 1e-4` and L2 by `w_j = 1e-8`, making elimination extremely unlikely. As a structural guarantee, if any confirmatory rule is still zeroed by the solver, a post-hoc constrained refit (unpenalized logistic regression) re-introduces it — see `_refit_with_confirmatory()`.
 
 ### With EBM-Discovered Interactions (automated pipeline)
 

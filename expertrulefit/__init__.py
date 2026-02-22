@@ -4,6 +4,7 @@ from .expert_rulefit import ExpertRuleFit
 from .ebm_bridge import discover_interaction_rules
 from .dual_model import DualModel
 from .dual_glass_box import DualGlassBox, EBMRuleExtractor, ExtractedRule
+from .rule_spec import RuleSpec, save_rule_specs, load_rule_specs
 
 # Single-source version: prefer installed package metadata (kept in sync with
 # pyproject.toml via [tool.setuptools.dynamic] → _version.__version__), fall
@@ -22,4 +23,7 @@ __all__ = [
     "DualGlassBox",
     "EBMRuleExtractor",
     "ExtractedRule",
+    "RuleSpec",
+    "save_rule_specs",
+    "load_rule_specs",
 ]

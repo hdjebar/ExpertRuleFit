@@ -13,8 +13,6 @@ Usage: python examples/prediction_basics.py
 import warnings
 warnings.filterwarnings("ignore")
 
-import os
-import sys
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
@@ -24,7 +22,6 @@ from sklearn.metrics import (
     classification_report,
 )
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from expertrulefit import ExpertRuleFit
 
 

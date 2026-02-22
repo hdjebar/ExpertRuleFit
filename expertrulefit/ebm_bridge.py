@@ -50,7 +50,10 @@ def discover_interaction_rules(
 
     rule_type : str, default="confirmatory"
         Either "confirmatory" (near-zero penalty, never eliminated)
-        or "optional" (reduced penalty, can be eliminated).
+        or "optional" (reduced penalty, can be eliminated).  The returned
+        rule dicts include a ``category`` key set to this value, and the
+        list is ready to pass directly to the matching ``ExpertRuleFit.fit``
+        parameter (``confirmatory_rules`` or ``optional_rules``).
 
     max_interactions : int, default=10
         Number of interactions for EBM to discover.
@@ -61,8 +64,9 @@ def discover_interaction_rules(
     Returns
     -------
     rules : list of dict
-        Each dict has 'name' and 'evaluate' keys, compatible with
-        ExpertRuleFit's confirmatory_rules or optional_rules parameter.
+        Each dict has ``name``, ``evaluate``, and ``category`` keys,
+        compatible with ExpertRuleFit's ``confirmatory_rules`` or
+        ``optional_rules`` parameter.
 
     ebm : ExplainableBoostingClassifier
         The fitted EBM model (for inspection / explanation).
@@ -103,6 +107,11 @@ def discover_interaction_rules(
     interactions.sort(key=lambda x: x["importance"], reverse=True)
     interactions = interactions[:top_k]
 
+    if rule_type not in ("confirmatory", "optional"):
+        raise ValueError(
+            f"rule_type must be 'confirmatory' or 'optional', got '{rule_type}'"
+        )
+
     # Step 2: For each interaction, find optimal thresholds from data
     rules = []
     for inter in interactions:
@@ -114,13 +123,32 @@ def discover_interaction_rules(
             X, y, feat_a, feat_b
         )
 
-        rule_name = (
-            f"EBM:{name_a}>{thresh_a:.4f} & {name_b}>{thresh_b:.4f} "
-            f"({direction}, imp={inter['importance']:.3f})"
-        )
+        # Encode direction into the rule:
+        #   "risk"       → (a > ta) & (b > tb)  → high values = positive class
+        #   "protective" → invert output so coefficient sign stays intuitive
+        #     The rule fires when the condition is NOT met (absence of
+        #     protective factors), which yields a positive coefficient
+        #     meaning "lacking this protection increases risk".
+        if direction == "protective":
+            rule_name = (
+                f"EBM:NOT({name_a}>{thresh_a:.4f} & {name_b}>{thresh_b:.4f}) "
+                f"({direction}, imp={inter['importance']:.3f})"
+            )
+            rule_fn = _make_rule_fn(
+                feat_a, thresh_a, feat_b, thresh_b, invert=True,
+            )
+        else:
+            rule_name = (
+                f"EBM:{name_a}>{thresh_a:.4f} & {name_b}>{thresh_b:.4f} "
+                f"({direction}, imp={inter['importance']:.3f})"
+            )
+            rule_fn = _make_rule_fn(feat_a, thresh_a, feat_b, thresh_b)
 
-        rule_fn = _make_rule_fn(feat_a, thresh_a, feat_b, thresh_b)
-        rules.append({"name": rule_name, "evaluate": rule_fn})
+        rules.append({
+            "name": rule_name,
+            "evaluate": rule_fn,
+            "category": rule_type,
+        })
 
     return rules, ebm
 
@@ -162,11 +190,19 @@ def _find_best_thresholds(X, y, feat_a, feat_b):
     return best_ta, best_tb, best_corr, direction
 
 
-def _make_rule_fn(feat_a, thresh_a, feat_b, thresh_b):
-    """Create a rule evaluation function with captured thresholds."""
+def _make_rule_fn(feat_a, thresh_a, feat_b, thresh_b, *, invert=False):
+    """Create a rule evaluation function with captured thresholds.
+
+    Parameters
+    ----------
+    invert : bool, default=False
+        If True, return ``1 - base_rule`` so that the rule fires when the
+        joint condition is *not* met (used for "protective" direction).
+    """
     def evaluate(X, feature_names):
         X = np.asarray(X, dtype=np.float64)
-        return ((X[:, feat_a] > thresh_a) & (X[:, feat_b] > thresh_b)).astype(np.float64)
+        base = ((X[:, feat_a] > thresh_a) & (X[:, feat_b] > thresh_b)).astype(np.float64)
+        return (1.0 - base) if invert else base
     return evaluate
 
 
