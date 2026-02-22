@@ -24,6 +24,63 @@ from sklearn.model_selection import StratifiedKFold
 from .expert_rulefit import ExpertRuleFit
 
 
+def _get_interpret_version():
+    """Return the installed InterpretML version string, or None."""
+    try:
+        from importlib.metadata import version as _meta_version
+        return _meta_version("interpret")
+    except Exception:
+        return None
+
+
+def _extract_ebm_local(ebm_local, sample_idx):
+    """Extract feature names and scores from an EBM local explanation.
+
+    Compatibility layer that isolates InterpretML private API access so
+    the rest of the codebase never touches ``_internal_obj`` directly.
+
+    Supported interpret versions:
+        - **>= 0.3**: uses the public ``.data(sample_idx)`` API
+        - **< 0.3** (legacy): falls back to the private
+          ``_internal_obj["specific"][sample_idx]`` dict
+
+    Parameters
+    ----------
+    ebm_local : EBMExplanation
+        Result of ``ebm.explain_local(X)``.
+    sample_idx : int
+        Index of the sample within the explanation object.
+
+    Returns
+    -------
+    names : list of str
+    scores : ndarray
+    """
+    # ---- Public API path (interpret >= 0.3) ----
+    if hasattr(ebm_local, "data") and callable(ebm_local.data):
+        try:
+            data = ebm_local.data(sample_idx)
+            if isinstance(data, dict) and "names" in data and "scores" in data:
+                return data["names"], np.asarray(data["scores"], dtype=np.float64)
+        except Exception:
+            pass  # fall through to legacy path
+
+    # ---- Legacy path (interpret < 0.3 or non-standard structure) ----
+    try:
+        obj = ebm_local._internal_obj["specific"][sample_idx]
+        return obj["names"], np.asarray(obj["scores"], dtype=np.float64)
+    except (AttributeError, KeyError, TypeError, IndexError) as exc:
+        interpret_ver = _get_interpret_version() or "unknown"
+        raise RuntimeError(
+            f"Cannot extract local EBM explanation for sample {sample_idx}. "
+            f"Installed InterpretML version: {interpret_ver}. "
+            f"Supported versions: >= 0.3 (public .data() API) and "
+            f"< 0.3 (legacy _internal_obj). If you are on a newer version "
+            f"whose API has changed, please open an issue. "
+            f"Underlying error: {exc}"
+        ) from exc
+
+
 class DualModel(BaseEstimator, ClassifierMixin):
     """EBM + ExpertRuleFit stacking for regulated banking environments.
 
@@ -265,9 +322,9 @@ class DualModel(BaseEstimator, ClassifierMixin):
         explanations = []
         for i in range(X.shape[0]):
             # EBM: extract per-feature contributions for this sample
-            ebm_data = ebm_local._internal_obj["specific"][i]
-            ebm_names = ebm_data["names"]
-            ebm_scores = ebm_data["scores"]
+            # Prefer the public .data() API (interpret >= 0.3);
+            # fall back to the legacy _internal_obj if unavailable.
+            ebm_names, ebm_scores = _extract_ebm_local(ebm_local, i)
 
             # Sort by absolute contribution, take top_n
             order = np.argsort(np.abs(ebm_scores))[::-1]

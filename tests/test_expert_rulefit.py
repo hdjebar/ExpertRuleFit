@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from expertrulefit import ExpertRuleFit
+from expertrulefit.expert_rulefit import eval_rule_on_data, build_rule_feature_matrix
 
 
 @pytest.fixture
@@ -232,6 +233,62 @@ def test_input_validation():
     erf_bad = ExpertRuleFit(rule_threshold=0)
     with pytest.raises(ValueError, match="rule_threshold"):
         erf_bad.fit(np.ones((10, 3)), np.array([0, 1, 0, 1, 0, 1, 0, 1, 0, 1]).astype(float))
+
+
+# ---------------------------------------------------------------------------
+# Tests for eval_rule_on_data parse_mode safety (P0 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestEvalRuleSafety:
+    """Verify that malformed rules never silently fire for all samples."""
+
+    def test_parse_failure_drop_rule_returns_all_zero(self):
+        """Default parse_mode='drop_rule': bad condition -> entire rule = 0."""
+        X = np.array([[1.0, 2.0], [3.0, 4.0]])
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = eval_rule_on_data("INVALID_JUNK", X, parse_mode="drop_rule")
+        assert result.sum() == 0.0, "Malformed rule must evaluate to all-zero"
+        assert len(w) == 1  # exactly one warning
+
+    def test_parse_failure_raise_mode(self):
+        """parse_mode='raise': bad condition -> ValueError."""
+        X = np.array([[1.0, 2.0]])
+        with pytest.raises(ValueError, match="Failed to parse"):
+            eval_rule_on_data("bad_rule", X, parse_mode="raise")
+
+    def test_parse_failure_warn_and_zero(self):
+        """parse_mode='warn_and_zero': bad condition -> zeros, rule continues."""
+        X = np.array([[1.0, 2.0], [3.0, 4.0]])
+        # "X_0 > 0.5 and BAD" — first condition would match both rows,
+        # but the unparseable second condition zeros the result.
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            result = eval_rule_on_data(
+                "X_0 > 0.5 and BAD_COND", X, parse_mode="warn_and_zero"
+            )
+        assert result.sum() == 0.0
+
+    def test_valid_rule_unaffected_by_parse_mode(self):
+        """parse_mode does not change behavior for well-formed rules."""
+        X = np.array([[1.0, 2.0], [3.0, 4.0], [0.0, 5.0]])
+        for mode in ("drop_rule", "raise", "warn_and_zero"):
+            result = eval_rule_on_data("X_0 > 1.5", X, parse_mode=mode)
+            np.testing.assert_array_equal(result, [0.0, 1.0, 0.0])
+
+    def test_invalid_parse_mode_raises(self):
+        X = np.array([[1.0]])
+        with pytest.raises(ValueError, match="parse_mode"):
+            eval_rule_on_data("X_0 > 0", X, parse_mode="invalid_option")
+
+    def test_default_parse_mode_is_drop_rule(self):
+        """Ensure the default (no keyword) uses the safe 'drop_rule' behavior."""
+        X = np.array([[1.0], [2.0]])
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            result = eval_rule_on_data("UNPARSEABLE", X)
+        assert result.sum() == 0.0
 
 
 if __name__ == "__main__":

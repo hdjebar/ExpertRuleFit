@@ -46,13 +46,72 @@ import warnings
 
 import numpy as np
 from joblib import Parallel, delayed
+from packaging.version import Version
 from scipy import sparse
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.utils.validation import check_is_fitted
 from imodels import RuleFitClassifier
+import sklearn as _sklearn
 
 logger = logging.getLogger(__name__)
+
+# scikit-learn >= 1.8 deprecated the ``penalty`` parameter on
+# LogisticRegression / LogisticRegressionCV.  The penalty type is now
+# inferred from ``l1_ratios`` (CV) or ``l1_ratio`` (non-CV).
+_SKLEARN_PENALTY_DEPRECATED = Version(_sklearn.__version__) >= Version("1.8")
+
+
+def _make_logistic_cv(*, l1_ratios, solver="saga", cv=5, random_state=42,
+                       tol=1e-4, max_iter=10000, n_jobs=None):
+    """Create a LogisticRegressionCV compatible with sklearn >= 1.8."""
+    if _SKLEARN_PENALTY_DEPRECATED:
+        return LogisticRegressionCV(
+            solver=solver,
+            l1_ratios=l1_ratios,
+            cv=cv,
+            random_state=random_state,
+            tol=tol,
+            max_iter=max_iter,
+            n_jobs=n_jobs,
+        )
+    return LogisticRegressionCV(
+        penalty="elasticnet",
+        solver=solver,
+        l1_ratios=l1_ratios,
+        cv=cv,
+        random_state=random_state,
+        tol=tol,
+        max_iter=max_iter,
+        n_jobs=n_jobs,
+    )
+
+
+def _make_logistic(*, penalty=None, solver="lbfgs", max_iter=10000,
+                    random_state=42, tol=1e-4, l1_ratio=None):
+    """Create a LogisticRegression compatible with sklearn >= 1.8."""
+    if _SKLEARN_PENALTY_DEPRECATED:
+        kw = dict(solver=solver, max_iter=max_iter,
+                  random_state=random_state, tol=tol)
+        if penalty is None:
+            # Unpenalized: use C=inf (sklearn 1.8 idiom)
+            import math
+            kw["C"] = math.inf
+            kw["l1_ratio"] = 0
+        elif penalty == "l2":
+            kw["l1_ratio"] = 0
+        elif penalty == "l1":
+            kw["l1_ratio"] = 1
+        elif penalty == "elasticnet":
+            kw["l1_ratio"] = l1_ratio if l1_ratio is not None else 0.5
+        return LogisticRegression(**kw)
+    return LogisticRegression(
+        penalty=penalty,
+        solver=solver,
+        max_iter=max_iter,
+        random_state=random_state,
+        tol=tol,
+    )
 
 
 def _bootstrap_iteration(b, X_all, y, inv_sqrt_w, base_seed, l1_ratios, tol, n_jobs):
@@ -62,9 +121,7 @@ def _bootstrap_iteration(b, X_all, y, inv_sqrt_w, base_seed, l1_ratios, tol, n_j
     X_boot = X_all[idx].multiply(inv_sqrt_w)
     y_boot = y[idx]
 
-    log_reg = LogisticRegressionCV(
-        penalty="elasticnet",
-        solver="saga",
+    log_reg = _make_logistic_cv(
         l1_ratios=l1_ratios,
         cv=3,
         random_state=base_seed,
@@ -93,7 +150,7 @@ _OPERATORS = {
 }
 
 
-def eval_rule_on_data(rule_str, X):
+def eval_rule_on_data(rule_str, X, *, parse_mode="drop_rule"):
     """Evaluate a rule string robustly using regex.
 
     Handles variations in spacing, negative numbers, and scientific notation.
@@ -104,22 +161,45 @@ def eval_rule_on_data(rule_str, X):
         Rule in ``X_i <op> threshold`` notation joined by `` and ``.
     X : array-like of shape (n_samples, n_features)
         Input data (dense or sparse).
+    parse_mode : {'drop_rule', 'raise', 'warn_and_zero'}, default='drop_rule'
+        How to handle unparseable conditions:
+
+        - ``'drop_rule'`` (default, safest): if *any* condition in the rule
+          cannot be parsed, the **entire rule** evaluates to all-False and a
+          warning is emitted.  This prevents a malformed rule from silently
+          firing for every sample.
+        - ``'raise'``: raise a ``ValueError`` immediately.
+        - ``'warn_and_zero'``: emit a warning and set the result for the
+          unparseable condition to all-False (other conditions still apply).
 
     Returns
     -------
     result : ndarray of shape (n_samples,), dtype float64
         Binary activation vector (0.0 or 1.0).
     """
+    _VALID_PARSE_MODES = {"drop_rule", "raise", "warn_and_zero"}
+    if parse_mode not in _VALID_PARSE_MODES:
+        raise ValueError(
+            f"parse_mode must be one of {_VALID_PARSE_MODES}, got '{parse_mode}'"
+        )
+
     n = X.shape[0]
     result = np.ones(n, dtype=bool)
 
     for cond in rule_str.split(" and "):
         match = _RULE_PATTERN.search(cond)
         if match is None:
-            warnings.warn(
+            msg = (
                 f"Failed to parse rule condition: '{cond.strip()}' "
                 f"in rule '{rule_str}'"
             )
+            if parse_mode == "raise":
+                raise ValueError(msg)
+            warnings.warn(msg)
+            if parse_mode == "drop_rule":
+                return np.zeros(n, dtype=np.float64)
+            # warn_and_zero: zero out this condition (AND with False)
+            result[:] = False
             continue
 
         col_idx = int(match.group(1))
@@ -144,10 +224,15 @@ def eval_rule_on_data(rule_str, X):
 # ---------------------------------------------------------------------------
 
 
-def build_rule_feature_matrix(rulefit_model, X):
+def build_rule_feature_matrix(rulefit_model, X, *, min_support=0.0,
+                              max_support=1.0):
     """Build the full rule feature matrix from a fitted RuleFitClassifier.
 
     Returns a sparse CSR matrix: [linear features | rule activations].
+
+    Rule columns are built incrementally as sparse vectors and horizontally
+    stacked, avoiding a dense ``(n_samples, n_rules)`` intermediate that can
+    cause memory blowups on large datasets.
 
     Parameters
     ----------
@@ -155,6 +240,14 @@ def build_rule_feature_matrix(rulefit_model, X):
         Fitted imodels rule-fit model.
     X : array-like of shape (n_samples, n_features)
         Input data.
+    min_support : float, default=0.0
+        Minimum fraction of samples a rule must activate on to be kept.
+        Rules firing on fewer samples are replaced with an all-zero column
+        to preserve column alignment with ``rules_without_feature_names_``.
+    max_support : float, default=1.0
+        Maximum fraction of samples a rule may activate on.  Rules firing
+        on more samples are replaced with all-zero (too common to be
+        informative).
 
     Returns
     -------
@@ -167,19 +260,25 @@ def build_rule_feature_matrix(rulefit_model, X):
         return sparse.csc_matrix(X)
 
     n_samples = X.shape[0]
-    n_rules = len(rules_no_fn)
 
-    # Pre-allocate dense rule matrix, then convert to sparse once
-    rule_matrix = np.empty((n_samples, n_rules), dtype=np.float64)
+    # Build sparse columns incrementally — avoids dense (n_samples, n_rules)
+    rule_columns = []
     for i, rule in enumerate(rules_no_fn):
         try:
-            rule_matrix[:, i] = eval_rule_on_data(rule.rule, X)
+            col = eval_rule_on_data(rule.rule, X)
         except Exception as exc:
             warnings.warn(f"Rule {i} evaluation failed: {exc}")
-            rule_matrix[:, i] = 0.0
+            col = np.zeros(n_samples, dtype=np.float64)
+
+        # Support pre-filter: replace out-of-range rules with zeros
+        support = col.sum() / n_samples
+        if support < min_support or support > max_support:
+            col = np.zeros(n_samples, dtype=np.float64)
+
+        rule_columns.append(sparse.csc_matrix(col.reshape(-1, 1)))
 
     X_base = sparse.csc_matrix(X)
-    return sparse.hstack([X_base, sparse.csc_matrix(rule_matrix)], format="csr")
+    return sparse.hstack([X_base] + rule_columns, format="csr")
 
 
 # ---------------------------------------------------------------------------
@@ -541,9 +640,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         w_stable = inv_sqrt_w[self.stable_mask_]
         X_stable_weighted = X_stable.multiply(w_stable)
 
-        self.final_model_ = LogisticRegressionCV(
-            penalty="elasticnet",
-            solver="saga",
+        self.final_model_ = _make_logistic_cv(
             l1_ratios=self.l1_ratios,
             cv=5,
             random_state=self._BASE_SEED,
@@ -604,7 +701,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         X_stable_weighted = X_stable.multiply(w_stable)
 
         try:
-            lr_unpenalized = LogisticRegression(
+            lr_unpenalized = _make_logistic(
                 penalty=None,
                 solver="lbfgs",
                 max_iter=10000,
