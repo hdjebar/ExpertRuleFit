@@ -8,7 +8,8 @@ with optional confirmatory rules that survive any regularization strength.
 Guarantees:
     1. **Reproducibility** — same data -> same rules -> same predictions (100/100 seeds)
     2. **Rule preservation** — confirmatory (regulatory) rules are NEVER eliminated
-    3. **Calibrated Probabilities** — outputs true logistic probabilities (e.g., PD)
+    3. **Logistic probabilities** — outputs logistic-regression probabilities;
+       post-hoc calibration is optional (``calibration=``)
 
 Mathematical Foundation — Weighted Feature Scaling:
 
@@ -89,11 +90,11 @@ def _make_logistic_cv(*, l1_ratios, solver="saga", cv=5, random_state=42,
 
 
 def _make_logistic(*, penalty=None, solver="lbfgs", max_iter=10000,
-                    random_state=42, tol=1e-4, l1_ratio=None):
+                    random_state=42, tol=1e-4, l1_ratio=None, C=1.0):
     """Create a LogisticRegression compatible with sklearn >= 1.8."""
     if _SKLEARN_PENALTY_DEPRECATED:
         kw = dict(solver=solver, max_iter=max_iter,
-                  random_state=random_state, tol=tol)
+                  random_state=random_state, tol=tol, C=C)
         if penalty is None:
             # Unpenalized: use C=inf (sklearn 1.8 idiom)
             import math
@@ -106,13 +107,13 @@ def _make_logistic(*, penalty=None, solver="lbfgs", max_iter=10000,
         elif penalty == "elasticnet":
             kw["l1_ratio"] = l1_ratio if l1_ratio is not None else 0.5
         return LogisticRegression(**kw)
-    return LogisticRegression(
-        penalty=penalty,
-        solver=solver,
-        max_iter=max_iter,
-        random_state=random_state,
-        tol=tol,
-    )
+    kw = dict(penalty=penalty, solver=solver, max_iter=max_iter,
+              random_state=random_state, tol=tol)
+    if penalty is not None:
+        kw["C"] = C
+    if penalty == "elasticnet":
+        kw["l1_ratio"] = l1_ratio if l1_ratio is not None else 0.5
+    return LogisticRegression(**kw)
 
 
 def _bootstrap_iteration(b, X_all, y, inv_sqrt_w, base_seed, l1_ratios, tol, n_jobs):
@@ -303,7 +304,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         1. **Reproducibility** — fixed internal seed + bootstrap -> 100/100 stability
         2. **Rule preservation** — confirmatory rules get near-zero penalty and are
            structurally protected via post-hoc refit if zeroed out
-        3. **Calibrated probabilities** — LogisticRegressionCV outputs true probabilities
+        3. **Logistic probabilities** — optional post-hoc calibration via ``calibration``
 
     Parameters
     ----------
@@ -374,6 +375,22 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     confirmatory_all_active_ : bool
         True if all confirmatory rules have non-zero coefficients.
 
+    confirmatory_sign_ok_ : bool
+        False if any confirmatory rule that declares ``expected_sign`` ended
+        with a coefficient of the opposite sign (or zero). True otherwise,
+        including when no rule declares an expected sign. A ``UserWarning``
+        is emitted for each violating rule. The sign is checked, not
+        enforced.
+
+    confirmatory_status_ : list of dict
+        Per confirmatory rule: ``name``, ``active``, ``coefficient``,
+        ``expected_sign``, ``sign_ok`` (None when no sign is declared).
+
+    confirmatory_diagnostics_ : list of dict
+        Collinearity / absorption diagnostics per confirmatory rule,
+        computed on the training data at the end of ``fit``. See
+        :meth:`diagnose_confirmatory`.
+
     rule_names_ : list of str
         Human-readable names for all candidate features.
 
@@ -436,7 +453,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             raise ValueError(f"y must be 1-dimensional, got shape {y.shape}")
         if X.shape[0] != y.shape[0]:
             raise ValueError(
-                f"X and y have incompatible shapes: "
+                f"X and y have incompatible shapes (inconsistent sample counts): "
                 f"X has {X.shape[0]} samples, y has {y.shape[0]}"
             )
         if X.shape[0] == 0:
@@ -474,14 +491,24 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     def _validate_expert_rules(self, rules, X, label):
         """Validate that expert rule evaluate functions return correct shapes."""
         for i, rule in enumerate(rules):
-            if "name" not in rule or "evaluate" not in rule:
-                raise ValueError(
-                    f"{label} rule {i} must have 'name' and 'evaluate' keys"
-                )
+            for key in ("name", "evaluate"):
+                if key not in rule:
+                    raise ValueError(
+                        f"{label} rule {i} is missing required key '{key}' "
+                        f"(rules need 'name' and 'evaluate')"
+                    )
             if not callable(rule["evaluate"]):
                 raise ValueError(
                     f"{label} rule '{rule['name']}': 'evaluate' must be callable"
                 )
+
+            if "expected_sign" in rule:
+                es = rule["expected_sign"]
+                if es is not None and (isinstance(es, bool) or es not in (1, -1)):
+                    raise ValueError(
+                        f"{label} rule '{rule['name']}': expected_sign must "
+                        f"be +1, -1 or None, got {es!r}"
+                    )
 
             result = rule["evaluate"](X, self.feature_names_)
             result = np.asarray(result, dtype=np.float64).ravel()
@@ -513,6 +540,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             Regulatory rules that MUST be preserved. Each dict must have:
             - ``"name"``: str — human-readable rule name
             - ``"evaluate"``: callable(X, feature_names) -> array of shape (n_samples,)
+            - ``"expected_sign"`` (optional): +1 / -1 / None — expected
+              direction of effect; checked (not enforced) after fitting.
             These rules bypass bootstrap filtering and get near-zero penalty.
             If still zeroed by the solver, a post-hoc refit guarantees inclusion.
 
@@ -527,6 +556,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         """
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64).ravel()
+        if X.ndim != 2:
+            raise ValueError(f"X must be 2-dimensional, got shape {X.shape}")
 
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
@@ -716,6 +747,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                         "data for these rules."
                     )
 
+            # === Step 7b: Sign check + absorption diagnostics ===
+            self._warn_sign_violations()
+            self.confirmatory_diagnostics_ = (
+                self._compute_confirmatory_diagnostics(X_all, y, inv_sqrt_w)
+                if confirmatory_rules else []
+            )
+
             # === Step 8 (optional): Post-hoc probability calibration ===
             self.calibrator_ = None
             if self.calibration is not None:
@@ -805,7 +843,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         return self.final_model_.predict(X_weighted)
 
     def predict_proba(self, X):
-        """Predict calibrated class probabilities.
+        """Predict class probabilities (calibrated only if ``calibration`` is set).
 
         Parameters
         ----------
@@ -835,29 +873,237 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         if hasattr(self, "_pred_cache_") and self._pred_cache_[0] == cache_key:
             return self._pred_cache_[1]
 
+        X_all = self._build_full_matrix(X)
+
+        X_stable = X_all[:, self.stable_mask_]
+        # scipy >= 1.15 returns COO from .multiply(); convert so callers can
+        # index rows/elements (e.g. DualModel.explain).
+        result = sparse.csr_matrix(X_stable.multiply(self.stable_inv_sqrt_w_))
+        self._pred_cache_ = (cache_key, result)
+        return result
+
+    def _build_full_matrix(self, X):
+        """Unweighted candidate matrix [linear | generated rules | expert rules]."""
+        X = np.asarray(X, dtype=np.float64)
         X_rules_sparse = build_rule_feature_matrix(self.base_rulefit_, X)
 
         expert_columns = []
-        for rule in self.confirmatory_rules_:
-            col = np.asarray(
-                rule["evaluate"](X, self.feature_names_), dtype=np.float64
-            )
-            expert_columns.append(sparse.csc_matrix(col).T)
-        for rule in self.optional_rules_:
+        for rule in list(self.confirmatory_rules_) + list(self.optional_rules_):
             col = np.asarray(
                 rule["evaluate"](X, self.feature_names_), dtype=np.float64
             )
             expert_columns.append(sparse.csc_matrix(col).T)
 
         if expert_columns:
-            X_all = sparse.hstack([X_rules_sparse] + expert_columns, format="csr")
-        else:
-            X_all = X_rules_sparse
+            return sparse.hstack([X_rules_sparse] + expert_columns, format="csr")
+        return X_rules_sparse
 
-        X_stable = X_all[:, self.stable_mask_]
-        result = X_stable.multiply(self.stable_inv_sqrt_w_)
-        self._pred_cache_ = (cache_key, result)
-        return result
+    # ------------------------------------------------------------------
+    # Confirmatory rule diagnostics (sign check, collinearity, absorption)
+    # ------------------------------------------------------------------
+
+    _DIAG_CORR_THRESHOLD = 0.5
+
+    def _final_hyperparams(self):
+        """(C, l1_ratio) used by the final model; C=inf if unpenalised."""
+        fm = self.final_model_
+        if isinstance(fm, LogisticRegressionCV):
+            C = float(np.ravel(fm.C_)[0])
+            l1 = getattr(fm, "l1_ratio_", None)
+            l1 = None if l1 is None else float(np.ravel(l1)[0])
+            return C, l1
+        C = float(getattr(fm, "C", np.inf))
+        return C, getattr(fm, "l1_ratio", None)
+
+    _DIAG_C_UNPENALISED = 1e4
+
+    def _fit_fixed(self, Xw, y, C):
+        """Deterministic ridge (L2) logistic fit with fixed C, using L-BFGS.
+
+        Used only by the diagnostics. L2 keeps the problem well-posed when
+        rules are perfectly collinear, and L-BFGS copes with the large
+        column scales created by the penalty-weight rescaling (saga does
+        not: its step size is set by the largest row norm). C is the final
+        model's C so that coefficient changes reflect the removal of a rule,
+        not a different CV choice. An unpenalised final model (after the
+        constrained refit) is approximated by C = 1e4.
+        """
+        if not np.isfinite(C):
+            C = self._DIAG_C_UNPENALISED
+        model = _make_logistic(
+            penalty="l2", solver="lbfgs", max_iter=10000,
+            random_state=self._BASE_SEED, tol=self.tol, C=C,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model.fit(Xw, y)
+        return model.coef_[0]
+
+    def _compute_confirmatory_diagnostics(self, X_all, y, inv_sqrt_w,
+                                          corr_threshold=None):
+        """Per confirmatory rule: correlation, VIF and absorption.
+
+        For each confirmatory rule c among the stable features:
+
+        - ``max_abs_corr`` / ``most_correlated``: largest absolute Pearson
+          correlation between c's column and any other stable column.
+        - ``vif``: variance inflation factor of c's column regressed (OLS,
+          with intercept) on all other stable columns.
+        - ``correlated_coef_shift``: for every stable rule with
+          ``|corr| >= corr_threshold``, the change in its coefficient when c
+          is removed. Both fits (with and without c) are ridge refits with
+          the final model's C and the same per-feature weights (see
+          ``_fit_fixed``). Large shifts mean c is absorbing weight those
+          rules would otherwise carry.
+        - ``absorption_ratio``: sum of ``|shift|`` over correlated rules
+          divided by ``|coefficient of c|`` in the reference refit.
+        - ``displaced_rules``: correlated rules that passed the bootstrap
+          filter (so the data supports them) but have a zero coefficient in
+          the final model. This reads the fitted model directly and does
+          not depend on the counterfactual refit.
+        """
+        if corr_threshold is None:
+            corr_threshold = self._DIAG_CORR_THRESHOLD
+
+        stable_idx = np.where(self.stable_mask_)[0]
+        Xs = X_all[:, stable_idx]
+        Xs = Xs.toarray() if sparse.issparse(Xs) else np.asarray(Xs)
+        Xs = Xs.astype(np.float64)
+        ws = np.asarray(inv_sqrt_w)[stable_idx]
+        names = [self.rule_names_[i] for i in stable_idx]
+        n, p = Xs.shape
+
+        C, _ = self._final_hyperparams()
+        coef_ref = self._fit_fixed(Xs * ws, y, C) * ws
+
+        # Correlation matrix (zero-variance columns get correlation 0)
+        Xc = Xs - Xs.mean(axis=0)
+        sd = np.sqrt((Xc ** 2).sum(axis=0))
+        safe_sd = np.where(sd > 1e-12, sd, 1.0)
+        Z = Xc / safe_sd
+        corr = Z.T @ Z
+        corr[:, sd <= 1e-12] = 0.0
+        corr[sd <= 1e-12, :] = 0.0
+
+        status_by_name = {
+            f"confirmatory:{s['name']}": s
+            for s in getattr(self, "confirmatory_status_", [])
+        }
+        true_coefs = self._get_true_coefficients()
+
+        diagnostics = []
+        for j, name in enumerate(names):
+            if not name.startswith("confirmatory:"):
+                continue
+            others = np.array([k for k in range(p) if k != j], dtype=int)
+
+            if sd[j] <= 1e-12 or others.size == 0:
+                max_corr, most_corr, vif = 0.0, None, float("nan")
+                correlated = np.array([], dtype=int)
+            else:
+                c_row = np.abs(corr[j, others])
+                kmax = int(np.argmax(c_row))
+                max_corr = float(c_row[kmax])
+                most_corr = names[others[kmax]]
+                correlated = others[c_row >= corr_threshold]
+
+                A = np.column_stack([np.ones(n), Xs[:, others]])
+                beta, *_ = np.linalg.lstsq(A, Xs[:, j], rcond=None)
+                resid = Xs[:, j] - A @ beta
+                r2 = 1.0 - float(resid @ resid) / float(Xc[:, j] @ Xc[:, j])
+                vif = float("inf") if r2 >= 1.0 - 1e-12 else 1.0 / (1.0 - r2)
+
+            displaced = [
+                names[k] for k in correlated if abs(true_coefs[k]) <= 1e-10
+            ]
+            shifts = {}
+            absorption = 0.0
+            if correlated.size:
+                coef_wo = self._fit_fixed(
+                    Xs[:, others] * ws[others], y, C
+                ) * ws[others]
+                pos_in_others = {k: i for i, k in enumerate(others)}
+                for k in correlated:
+                    shifts[names[k]] = float(
+                        coef_wo[pos_in_others[k]] - coef_ref[k]
+                    )
+                denom = max(abs(float(coef_ref[j])), 1e-12)
+                absorption = float(sum(abs(v) for v in shifts.values()) / denom)
+
+            st = status_by_name.get(name, {})
+            diagnostics.append({
+                "name": name[len("confirmatory:"):],
+                "coefficient": float(true_coefs[j]),
+                "coefficient_reference_refit": float(coef_ref[j]),
+                "expected_sign": st.get("expected_sign"),
+                "sign_ok": st.get("sign_ok"),
+                "max_abs_corr": max_corr,
+                "most_correlated": most_corr,
+                "vif": vif,
+                "corr_threshold": float(corr_threshold),
+                "n_correlated": int(correlated.size),
+                "correlated_coef_shift": shifts,
+                "absorption_ratio": absorption,
+                "n_displaced": len(displaced),
+                "displaced_rules": displaced,
+            })
+        return diagnostics
+
+    def diagnose_confirmatory(self, X=None, y=None, corr_threshold=None):
+        """Collinearity and absorption diagnostics for confirmatory rules.
+
+        With no arguments, returns the diagnostics computed on the training
+        data at the end of ``fit``. Pass ``X`` and ``y`` to recompute them on
+        other data (e.g. a validation set) or with another
+        ``corr_threshold`` (default 0.5).
+
+        Returns
+        -------
+        diagnostics : list of dict
+            One dict per confirmatory rule with keys ``name``,
+            ``coefficient``, ``coefficient_reference_refit``,
+            ``expected_sign``, ``sign_ok``, ``max_abs_corr``,
+            ``most_correlated``, ``vif``, ``corr_threshold``,
+            ``n_correlated``, ``correlated_coef_shift`` (dict: rule name ->
+            coefficient change when the confirmatory rule is removed),
+            ``absorption_ratio``, ``n_displaced`` and ``displaced_rules``
+            (correlated stable rules zeroed in the final model).
+        """
+        check_is_fitted(self, ["base_rulefit_", "final_model_"])
+        if X is None and y is None and corr_threshold is None:
+            return [dict(d) for d in getattr(self, "confirmatory_diagnostics_", [])]
+        if X is None or y is None:
+            raise ValueError(
+                "Pass both X and y to recompute diagnostics (needed for a "
+                "non-default corr_threshold)."
+            )
+        if not self.confirmatory_rules_:
+            return []
+        X = np.asarray(X, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64).ravel()
+        X_all = self._build_full_matrix(X)
+        inv_sqrt_w = np.ones(X_all.shape[1])
+        inv_sqrt_w[self.stable_mask_] = self.stable_inv_sqrt_w_
+        with threadpool_limits(
+            limits=self.thread_limit if self.deterministic else None
+        ):
+            return self._compute_confirmatory_diagnostics(
+                X_all, y, inv_sqrt_w, corr_threshold=corr_threshold,
+            )
+
+    def _warn_sign_violations(self):
+        """Emit one UserWarning per confirmatory rule whose sign is wrong."""
+        for st in getattr(self, "confirmatory_status_", []):
+            if st.get("sign_ok") is False:
+                warnings.warn(
+                    f"Confirmatory rule '{st['name']}' has coefficient "
+                    f"{st['coefficient']:+.6g} but expected_sign="
+                    f"{st['expected_sign']:+d}. The rule is kept, but its "
+                    f"fitted effect contradicts the expert's expectation; "
+                    f"check diagnose_confirmatory() for collinearity.",
+                    UserWarning,
+                    stacklevel=3,
+                )
 
     # ------------------------------------------------------------------
     # Interpretability (coefficients in ORIGINAL feature space)
@@ -1119,6 +1365,11 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "confirmatory_penalty": self.confirmatory_penalty,
             "optional_penalty": self.optional_penalty,
             "confirmatory_all_active": self.confirmatory_all_active_,
+            "confirmatory_sign_ok": getattr(self, "confirmatory_sign_ok_", True),
+            "confirmatory_status": [
+                dict(s) for s in getattr(self, "confirmatory_status_", [])
+            ],
+            "confirmatory_diagnostics": self.diagnose_confirmatory(),
             "rules": rules,
             "feature_names": self.feature_names_,
             "environment": {
@@ -1166,11 +1417,43 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             lines.append(f"\nConfirmatory rules ({len(self.confirmatory_rules_)}):")
             for s in self.confirmatory_status_:
                 status = "ACTIVE" if s["active"] else "INACTIVE"
-                lines.append(f"  [{status}] {s['name']}")
+                sign = ""
+                if s.get("expected_sign") is not None:
+                    sign = (
+                        f" sign={'OK' if s['sign_ok'] else 'CONTRADICTS'}"
+                        f" (expected {s['expected_sign']:+d})"
+                    )
+                coef = s.get("coefficient")
+                coef_txt = f" coef={coef:+.6f}" if coef is not None else ""
+                lines.append(f"  [{status}]{coef_txt}{sign} {s['name']}")
             if self.confirmatory_all_active_:
                 lines.append("  -> All confirmatory rules preserved.")
             else:
                 lines.append("  WARNING: Some confirmatory rules were eliminated!")
+            if not getattr(self, "confirmatory_sign_ok_", True):
+                lines.append(
+                    "  WARNING: Some confirmatory coefficients contradict "
+                    "their expected sign!"
+                )
+
+            diags = getattr(self, "confirmatory_diagnostics_", [])
+            if diags:
+                lines.append(
+                    "\nConfirmatory diagnostics (training data; "
+                    f"correlated = |r| >= {diags[0]['corr_threshold']:.2f}):"
+                )
+                for d in diags:
+                    vif = d["vif"]
+                    vif_txt = "n/a" if vif != vif else (
+                        "inf" if vif == float("inf") else f"{vif:.2f}"
+                    )
+                    lines.append(
+                        f"  {d['name']}: max|r|={d['max_abs_corr']:.2f}"
+                        f" (with {d['most_correlated']}), VIF={vif_txt},"
+                        f" correlated rules={d['n_correlated']}"
+                        f" (zeroed in final model: {d['n_displaced']}),"
+                        f" absorption ratio={d['absorption_ratio']:.2f}"
+                    )
 
         if self.optional_rules_:
             lines.append(f"\nOptional rules ({len(self.optional_rules_)}):")
@@ -1235,6 +1518,10 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "n_expert_": self.n_expert_,
             "confirmatory_all_active_": self.confirmatory_all_active_,
             "confirmatory_status_": self.confirmatory_status_,
+            "confirmatory_sign_ok_": getattr(self, "confirmatory_sign_ok_", True),
+            "confirmatory_diagnostics_": getattr(
+                self, "confirmatory_diagnostics_", []
+            ),
         }
         joblib.dump(state, path)
 
@@ -1278,6 +1565,11 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         model.n_expert_ = state["n_expert_"]
         model.confirmatory_all_active_ = state["confirmatory_all_active_"]
         model.confirmatory_status_ = state["confirmatory_status_"]
+        # Older saved models predate the sign check / diagnostics
+        model.confirmatory_sign_ok_ = state.get("confirmatory_sign_ok_", True)
+        model.confirmatory_diagnostics_ = state.get(
+            "confirmatory_diagnostics_", []
+        )
         model.confirmatory_rules_ = confirmatory_rules or []
         model.optional_rules_ = optional_rules or []
 
@@ -1310,6 +1602,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         if not self.confirmatory_rules_:
             self.confirmatory_all_active_ = True
+            self.confirmatory_sign_ok_ = True
             return
 
         # Build a lookup: rule name -> position in stable feature set
@@ -1321,19 +1614,33 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             if j < len(true_coefs)
         }
 
+        all_sign_ok = True
         for rule in self.confirmatory_rules_:
             name = f"confirmatory:{rule['name']}"
             j = name_to_pos.get(name)
-            active = j is not None and abs(true_coefs[j]) > 1e-10
+            coef = float(true_coefs[j]) if j is not None else 0.0
+            active = j is not None and abs(coef) > 1e-10
+
+            expected = rule.get("expected_sign")
+            if expected is None:
+                sign_ok = None
+            else:
+                sign_ok = bool(active and np.sign(coef) == expected)
+                if not sign_ok:
+                    all_sign_ok = False
 
             self.confirmatory_status_.append({
                 "name": rule["name"],
                 "active": active,
+                "coefficient": coef,
+                "expected_sign": expected,
+                "sign_ok": sign_ok,
             })
             if not active:
                 all_active = False
 
         self.confirmatory_all_active_ = all_active
+        self.confirmatory_sign_ok_ = all_sign_ok
 
 
 def _rule_category(name):

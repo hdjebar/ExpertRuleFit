@@ -57,14 +57,23 @@ class RuleSpec:
     metadata : dict, optional
         Arbitrary metadata for governance (e.g., ``source``, ``policy_id``,
         ``jurisdiction``, ``owner``, ``rationale``, ``created_at``).
+    expected_sign : {+1, -1, None}, default=None
+        Direction of effect the expert expects when the rule fires:
+        ``+1`` means it should raise P(y=1), ``-1`` that it should lower it.
+        ExpertRuleFit does not constrain the coefficient; it checks the
+        fitted sign after ``fit`` and warns if it contradicts this value
+        (see ``ExpertRuleFit.confirmatory_sign_ok_``). ``None`` skips the
+        check.
     """
 
     name: str
     clauses: List[Dict[str, Any]]
     invert: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)
+    expected_sign: Optional[int] = None
 
     def __post_init__(self):
+        self.expected_sign = _check_expected_sign(self.expected_sign, self.name)
         if not self.clauses:
             raise ValueError("RuleSpec must have at least one clause")
         for i, c in enumerate(self.clauses):
@@ -145,9 +154,12 @@ class RuleSpec:
         Returns
         -------
         rule_dict : dict
-            Has keys ``name``, ``category``, and optionally ``evaluate``.
+            Has keys ``name``, ``category``, and optionally ``evaluate``
+            and ``expected_sign``.
         """
         d = {"name": self.name, "category": category}
+        if self.expected_sign is not None:
+            d["expected_sign"] = self.expected_sign
         if feature_names is not None:
             d["evaluate"] = self.compile(feature_names)
         return d
@@ -159,6 +171,7 @@ class RuleSpec:
             "clauses": [dict(c) for c in self.clauses],
             "invert": self.invert,
             "metadata": dict(self.metadata),
+            "expected_sign": self.expected_sign,
         }
 
     @classmethod
@@ -169,6 +182,7 @@ class RuleSpec:
             clauses=d["clauses"],
             invert=d.get("invert", False),
             metadata=d.get("metadata", {}),
+            expected_sign=d.get("expected_sign"),
         )
 
     def to_sql(self, *, alias: Optional[str] = None) -> str:
@@ -210,6 +224,18 @@ class RuleSpec:
         if self.invert:
             expr = f"NOT ({expr})"
         return f"RuleSpec('{self.name}': {expr})"
+
+
+def _check_expected_sign(value, rule_name):
+    """Validate an ``expected_sign`` value; return it normalised to int/None."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or value not in (1, -1):
+        raise ValueError(
+            f"Rule '{rule_name}': expected_sign must be +1, -1 or None, "
+            f"got {value!r}"
+        )
+    return int(value)
 
 
 def save_rule_specs(specs: list[RuleSpec], path: str | Path) -> None:

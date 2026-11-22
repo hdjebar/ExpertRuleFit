@@ -84,21 +84,51 @@ erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 
 **How it works:** Confirmatory rules are given a very small penalty weight using weighted feature scaling. We fit on `X_j / sqrt(w_j)`, which reduces the effective elastic-net penalty on confirmatory coefficients (L2 scaled by `w_j`, L1 scaled by `sqrt(w_j)`). With `w_j = 1e-8`, confirmatory rules are very unlikely to be shrunk to zero by regularization. **Important:** A confirmatory coefficient can still be near/at zero if the rule carries no incremental signal, is perfectly collinear, or due to solver tolerances. ExpertRuleFit detects this and performs a post-hoc refit to enforce inclusion.
 
+### Expected sign and absorption diagnostics
+
+A confirmatory rule can declare the direction the expert expects (`+1`: the rule should raise P(y=1); `-1`: lower it). The sign is **checked, not enforced**: after `fit`, a contradiction sets `confirmatory_sign_ok_ = False` and emits a `UserWarning`, but the rule stays in the model.
+
+```python
+confirmatory = [{
+    "name": "High cash ratio",
+    "evaluate": lambda X, fn: (X[:, fn.index("cash_ratio")] > 0.4).astype(float),
+    "expected_sign": +1,
+}]
+erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
+
+erf.confirmatory_sign_ok_        # False if any declared sign is contradicted
+erf.diagnose_confirmatory()      # per confirmatory rule (training data):
+#   max_abs_corr / most_correlated  – strongest correlation with another retained column
+#   vif                             – variance inflation factor
+#   displaced_rules                 – correlated rules (|r| >= 0.5) that passed the
+#                                     bootstrap filter but were zeroed in the final model
+#   correlated_coef_shift           – change in those rules' coefficients when the
+#                                     confirmatory rule is removed (ridge refits)
+erf.diagnose_confirmatory(X_val, y_val, corr_threshold=0.7)   # recompute on other data
+```
+
+`RuleSpec(..., expected_sign=+1)` carries the sign through `to_rule_dict()` and JSON save/load. `summary()` and `audit_bundle()` include the sign status and the diagnostics. A near-unpenalised confirmatory rule that duplicates generated rules will take their weight; the diagnostics make that visible, they do not prevent it.
+
 ### With EBM-Discovered Interactions (automated pipeline)
 
 ```python
 from expertrulefit import ExpertRuleFit, discover_interaction_rules
 
-# EBM discovers which feature pairs interact, then finds optimal thresholds
+# EBM discovers which feature pairs interact, then finds optimal thresholds.
+# Returned rules are OPTIONAL by default (rule_type="optional").
 rules, ebm = discover_interaction_rules(X_train, y_train, feature_names, top_k=3)
 
-# Feed EBM interactions as confirmatory rules → guaranteed to survive
+# Data-discovered rules enter as optional: reduced penalty, but they must
+# still survive bootstrap filtering like any generated rule.
 erf = ExpertRuleFit(max_rules=50)
-erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=rules)
-assert erf.confirmatory_all_active_
+erf.fit(X_train, y_train, feature_names=fn,
+        confirmatory_rules=confirmatory,   # expert-imposed rules only
+        optional_rules=rules)              # EBM-discovered rules
 ```
 
-**Pipeline:** EBM (GA2M) identifies which feature pairs interact → quantile scan finds discriminative thresholds → ExpertRuleFit preserves them with near-zero penalty.
+**Pipeline:** EBM (GA2M) identifies which feature pairs interact → quantile scan finds discriminative thresholds → ExpertRuleFit treats them as optional candidates.
+
+> **Expert-imposed vs data-discovered.** Confirmatory status is reserved for rules an expert imposes. Rules found by EBM are optional unless a domain expert reviews and promotes them (pass `rule_type="confirmatory"`, or move the dict into `confirmatory_rules`). Promoting an unreviewed data-discovered rule would lock a possibly accidental correlation into the model. Each returned dict carries `"source": "ebm_discovered"` for audit trails.
 
 ### Dual Model — Full Stacking Architecture (§5 of spec)
 
@@ -121,7 +151,7 @@ explanations = dm.explain(X_test[:1])
 
 ## Prediction & Classification
 
-ExpertRuleFit is a **binary classifier** (classes {0, 1}). It outputs both hard labels and calibrated probabilities via logistic regression.
+ExpertRuleFit is a **binary classifier** (classes {0, 1}). It outputs hard labels and logistic probabilities; post-hoc calibration is optional (`calibration="sigmoid"` or `"isotonic"`).
 
 ### How Prediction Works
 
@@ -133,7 +163,7 @@ Training data
   → Frequency filter (≥ 80%, confirmatory force-included)
   → Final LogisticRegressionCV on stable features
   → Constrained refit if confirmatory rules zeroed
-  → Logistic sigmoid → calibrated P(y=1)
+  → Logistic sigmoid → P(y=1)  (optional post-hoc calibration)
 ```
 
 ### predict() — Hard Class Labels
@@ -145,14 +175,14 @@ erf.fit(X_train, y_train, feature_names=fn)
 y_pred = erf.predict(X_test)  # array of {0, 1}
 ```
 
-### predict_proba() — Calibrated Probabilities
+### predict_proba() — Probabilities
 
 ```python
 proba = erf.predict_proba(X_test)  # shape (n_samples, 2)
 p_default = proba[:, 1]            # P(y=1) — e.g., probability of default
 ```
 
-Probabilities are **calibrated** (true logistic outputs, not post-hoc). Each row sums to 1.0. Use `proba[:, 1]` for AUC, ranking, and threshold tuning.
+Probabilities are logistic-regression outputs; their calibration has not yet been evaluated on the benchmark datasets. If calibrated scores matter (e.g. PD estimates), set `calibration="sigmoid"` or `"isotonic"` and check reliability on held-out data. Each row sums to 1.0. Use `proba[:, 1]` for AUC, ranking, and threshold tuning.
 
 ### Custom Decision Threshold
 
