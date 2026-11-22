@@ -201,7 +201,7 @@
 - **Key Contribution:** LLM-derived penalty factors in Lasso; features identified as important get lower penalties. Opens a future direction: using LLMs to automatically set penalty weights for ExpertRuleFit.
 
 ### Weighted Lasso for Known Regressors (INRIA, 2024)
-- **Key Contribution:** Penalty=0 for known-important features; matches oracle performance at >90% prior knowledge. Provides direct theoretical backing for ExpertRuleFit's confirmatory rule mechanism (w_j = 1e-8).
+- **Key Contribution:** Penalty=0 for known-important features; matches oracle performance at >90% prior knowledge. Provides direct theoretical backing for ExpertRuleFit's confirmatory rule mechanism (small w_j; default 1e-4 since 0.7, previously 1e-8).
 
 ### Prior Knowledge in Regularized Regression (Zeng et al., 2021)
 - **Key Contribution:** Feature-specific penalties as log-linear functions of meta-features via empirical Bayes.

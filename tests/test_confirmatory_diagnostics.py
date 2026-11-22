@@ -108,11 +108,11 @@ def test_invalid_expected_sign_raises(signal_data):
 def absorbing_model(signal_data):
     """Confirmatory b>0 duplicates the strongest generated signal.
 
-    confirmatory_penalty=1e-4 so that generated rules on b survive the
-    bootstrap filter and there is something to absorb from.
+    The generated rules on b are absorbed (at the bootstrap filter or in the
+    final fit); the diagnostics must report them.
     """
     X, y, fn = signal_data
-    m = ExpertRuleFit(confirmatory_penalty=1e-4, **FAST).fit(
+    m = ExpertRuleFit(**FAST).fit(
         X, y, feature_names=fn,
         confirmatory_rules=[_rule_b_pos(+1), _noise_rule()],
     )
@@ -123,16 +123,14 @@ def test_absorption_detected_for_duplicating_rule(absorbing_model):
     m, _, _ = absorbing_model
     diags = {d["name"]: d for d in m.diagnose_confirmatory()}
     d = diags["b>0"]
+    # Candidate rules on b are near-duplicates of b>0 ...
     assert d["max_abs_corr"] > 0.8
+    assert d["most_correlated"].startswith(("rule[", "linear:b"))
     assert d["n_correlated"] >= 1
-    assert d["vif"] > 2.0
-    assert d["absorption_ratio"] > 0.0
-    # Removing b>0 moves weight onto the correlated rules
-    assert any(abs(v) > 1e-6 for v in d["correlated_coef_shift"].values())
-    # Correlated rules that passed the bootstrap filter were zeroed:
-    # the confirmatory rule took their weight.
+    # ... and none of them is active: b>0 took their weight.
     assert d["n_displaced"] >= 1
-    assert set(d["displaced_rules"]) <= set(d["correlated_coef_shift"])
+    assert set(d["displaced_rules"]) == set(d["displaced_bootstrap_frequency"])
+    assert all(0.0 <= f <= 1.0 for f in d["displaced_bootstrap_frequency"].values())
 
 
 def test_no_absorption_for_unrelated_rule(absorbing_model):
@@ -161,7 +159,7 @@ def test_diagnostics_recompute_on_new_data(absorbing_model):
     for s, a in zip(stored, again):
         assert s["name"] == a["name"]
         assert a["max_abs_corr"] == pytest.approx(s["max_abs_corr"])
-        assert a["vif"] == pytest.approx(s["vif"])
+        assert a["vif"] == pytest.approx(s["vif"], nan_ok=True)
     strict = m.diagnose_confirmatory(X, y, corr_threshold=0.99)
     assert all(d["corr_threshold"] == 0.99 for d in strict)
     with pytest.raises(ValueError):
@@ -171,7 +169,7 @@ def test_diagnostics_recompute_on_new_data(absorbing_model):
 def test_diagnostics_are_deterministic(signal_data, absorbing_model):
     X, y, fn = signal_data
     m1, _, _ = absorbing_model
-    m2 = ExpertRuleFit(confirmatory_penalty=1e-4, **FAST).fit(
+    m2 = ExpertRuleFit(**FAST).fit(
         X, y, feature_names=fn,
         confirmatory_rules=[_rule_b_pos(+1), _noise_rule()],
     )

@@ -312,7 +312,7 @@ class DualModel(BaseEstimator, ClassifierMixin):
         # Precompute ERF matrix once for all samples (vectorized)
         stable_indices = np.where(self.erf_.stable_mask_)[0]
         true_coefs = self.erf_._get_true_coefficients()
-        X_pred_all = self.erf_._build_predict_matrix(X)
+        X_pred_all = self.erf_._build_stable_raw_matrix(X)  # raw activations
 
         # Precompute active coefficient mask
         active_coef_mask = np.zeros(len(true_coefs), dtype=bool)

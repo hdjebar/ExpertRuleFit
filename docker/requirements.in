@@ -1,0 +1,18 @@
+# Inputs for the pinned research stack (compile with uv, see docker/README.md).
+# scikit-learn < 1.8: from 1.8 the `penalty` argument is deprecated and
+# imodels' internal L1 logistic fit receives l1_ratio=0 (i.e. L2).
+numpy
+scipy
+scikit-learn>=1.6,<1.8
+joblib
+imodels
+six                 # imported by imodels but not declared by it
+packaging
+threadpoolctl
+interpret
+pandas
+pytest
+matplotlib
+seaborn
+tqdm
+ucimlrepo

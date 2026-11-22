@@ -82,11 +82,11 @@ Z = [\,x_1,\dots,x_p,\; r_1(X),\dots,r_k(X),\; c_1(X),\dots,c_m(X),\; o_1(X),\do
 \]
 where $r_j$ are tree-derived binary rules, $c_j$ confirmatory expert rules and $o_j$ optional expert rules. Predictions are $P(y=1\mid x)=\sigma(\beta_0+\sum_j \beta_j z_j)$.
 
-\paragraph{Penalty weighting.} Each column receives a weight $w_j$ (1 for linear terms and tree rules, $w_c=10^{-8}$ for confirmatory rules, $w_o=0.3$ for optional rules by default). Columns are rescaled as $\tilde z_j = z_j/\sqrt{w_j}$ before an elastic-net fit, which scales the effective penalties:
+\paragraph{Standardisation and penalty weighting.} Columns are first standardised with statistics from the training data: linear terms are centred and divided by their standard deviation $s_j$, rule columns are divided by $s_j$ only, which keeps them sparse. Each column then receives a weight $w_j$ (1 for linear terms and tree rules, $w_c=10^{-4}$ for confirmatory rules, $w_o=0.3$ for optional rules by default) and is rescaled as $\tilde z_j = (z_j-m_j)/(s_j\sqrt{w_j})$ before an elastic-net fit, which scales the effective penalties on the standardised coefficients:
 \[
 \text{L1 term}\propto \sqrt{w_j}\,|\beta_j|,\qquad \text{L2 term}\propto w_j\,\beta_j^2 .
 \]
-With $w_c=10^{-8}$ the $\ell_1$ penalty on confirmatory rules is reduced by a factor of $10^4$. Coefficients are mapped back to the original scale before reporting.
+With $w_c=10^{-4}$ the $\ell_1$ penalty on confirmatory rules is reduced by a factor of 100. Coefficients and the intercept are mapped back to the original scale before reporting. Earlier versions used $w_c=10^{-8}$ without standardisation. A confirmatory column was then $10^4$ times larger than the others, which made the saga solver stop far from the optimum without a convergence warning. Inclusion of confirmatory rules does not rely on $w_c$: they bypass the frequency filter, and the refit below restores any the solver sets to zero.
 
 \begin{algorithm}[h]
 \caption{\textsc{ExpertRuleFit} training}\label{alg:erf}
@@ -108,7 +108,7 @@ The user's \texttt{random\_state} is ignored (a warning is emitted); all interna
 
 \paragraph{Expert-imposed versus data-discovered rules.} Confirmatory status is reserved for rules an expert imposes. Rules found by the EBM extension are data-discovered: they enter as optional rules, with a reduced penalty, and must pass the frequency filter like any tree rule. An expert can promote one to confirmatory after review; each discovered rule records its provenance (\texttt{source="ebm\_discovered"}) for the audit trail.
 
-\paragraph{Sign check and absorption diagnostics.} A confirmatory rule may declare an expected sign $s_c\in\{+1,-1\}$. After fitting, the estimator compares $\operatorname{sign}(\beta_c)$ with $s_c$, sets a flag \texttt{confirmatory\_sign\_ok\_} and emits a warning for each contradiction; the sign is checked, not enforced. For each confirmatory rule it also reports, on the training data, the largest absolute correlation with another retained column, its variance inflation factor, the retained rules with $|r|\ge 0.5$ that the final model set to zero, and the change in their coefficients when the confirmatory rule is removed (ridge refits with the final model's $C$ and the same weights). These diagnostics make absorption visible; they do not prevent it.
+\paragraph{Sign check and absorption diagnostics.} A confirmatory rule may declare an expected sign $s_c\in\{+1,-1\}$. After fitting, the estimator compares $\operatorname{sign}(\beta_c)$ with $s_c$, sets a flag \texttt{confirmatory\_sign\_ok\_} and emits a warning for each contradiction; the sign is checked, not enforced. For each confirmatory rule it also reports, on the training data, the largest absolute correlation with any other candidate column, its variance inflation factor among retained columns, the candidate columns with $|r|\ge 0.5$ that are inactive in the final model (removed by the frequency filter or set to zero), and the change in the coefficients of retained correlated columns when the confirmatory rule is removed (ridge refits with the final model's $C$ and the same weights). These diagnostics make absorption visible; they do not prevent it.
 
 \section{Reproducibility guarantee}\label{sec:repro}
 
@@ -118,7 +118,7 @@ The guarantee does not cover different data (adding or correcting rows may chang
 
 \section{Experiments}\label{sec:exp}
 
-\paragraph{Data and protocol.} We use German Credit (UCI, 1{,}000 rows), Taiwan Credit (UCI, 30{,}000 rows) and HMEQ (about 5{,}960 rows). Each dataset is split once into 80\% training and 20\% test data (stratified, seed 42). Each model is then fitted 100 times with \texttt{random\_state} $=0,\dots,99$ on that split. A run's rule set is the set of rules with non-zero coefficient. \emph{Stability} is the number of runs sharing the most frequent rule set; Jaccard similarity is averaged over sampled pairs of runs.
+\paragraph{Data and protocol.} We use German Credit (UCI, 1{,}000 rows), Taiwan Credit (UCI; a random subsample of 5{,}000 of the 30{,}000 rows, seed 42, to bound runtime) and HMEQ (5{,}960 rows). Each dataset is split once into 80\% training and 20\% test data (stratified, seed 42). Missing values are imputed (median, or mode for categorical columns), categorical columns are ordinally encoded and all columns are standardised. The results in Table~\ref{tab:results} were produced with these statistics fitted on the full dataset before the split; the benchmark script now fits them on the training split only, and the table will be regenerated with that protocol on the pinned software stack. Each model is then fitted 100 times with \texttt{random\_state} $=0,\dots,99$ on that split. A run's rule set is the set of rules with non-zero coefficient. \emph{Stability} is the number of runs sharing the most frequent rule set; Jaccard similarity is averaged over sampled pairs of runs.
 
 \begin{table}[h]
 \centering\small
@@ -150,7 +150,7 @@ Mean pairwise Jaccard similarity is about 0.05 for RuleFit and 1.000 for \textsc
 \begin{itemize}
   \item \textbf{Stability under perturbation is unmeasured} (Section~\ref{sec:exp}).
   \item \textbf{No sign constraint.} A confirmatory rule is guaranteed to stay in the model, not to keep the direction the expert intended. A declared expected sign is checked and a contradiction is flagged, but the coefficient is not constrained.
-  \item \textbf{Unpenalised rules can absorb signal.} With $w_c=10^{-8}$, a confirmatory rule correlated with tree rules can take their weight; a weak or wrong expert rule then shapes the model. The diagnostics report this case; they do not correct it.
+  \item \textbf{Weakly penalised rules can absorb signal.} With a small $w_c$, a confirmatory rule correlated with tree rules can take their weight; a weak or wrong expert rule then shapes the model. The diagnostics report this case; they do not correct it.
   \item \textbf{Calibration not evaluated.} Penalised logistic outputs are often too conservative; optional post-hoc calibration exists but reliability curves and Brier scores have not been reported.
   \item \textbf{Coarse frequency estimate.} With $B=10$, the 80\% threshold means 8 of 10 draws; the draws are fixed, not resampled.
   \item \textbf{Scope.} Binary classification only; evidence limited to three credit datasets of moderate size; rule readability (up to four conditions) not tested with users.

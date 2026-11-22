@@ -21,9 +21,17 @@ Mathematical Foundation — Weighted Feature Scaling:
         L1:  l1 * sqrt(w_j) * |b_j|   (reduced by sqrt(w_j))
         L2:  l2 * w_j * b_j^2          (reduced by w_j)
 
-    With w_j = 1e-8 for confirmatory rules, the L1 penalty is reduced by
-    sqrt(1e-8) = 1e-4, making elimination extremely unlikely. The true
-    coefficients must be recovered as: b_j = b_tilde_j / sqrt(w_j)
+    With the default w_j = 1e-4 for confirmatory rules, the L1 penalty is
+    reduced by sqrt(1e-4) = 1e-2. The true coefficients are recovered as
+    b_j = b_tilde_j / sqrt(w_j).
+
+    Columns are standardised first (``standardize=True``): the solver sees
+    (z_j - m_j) / s_j / sqrt(w_j), so the weights act on standardised
+    coefficients and no column dominates saga's step size. Very small
+    weights reintroduce that problem: with w_j = 1e-8 (the pre-0.7 default)
+    the confirmatory column is 1e4 times larger than the others and saga
+    stops far from the optimum without a ConvergenceWarning
+    (docs/refinement/notes/FINDINGS_2026-11-22.md).
 
     Note: the 1/sqrt(w_j) scaling gives exact adaptive-weight behavior on L2
     (per Zou 2006) but only sqrt(w_j) reduction on L1. This is a deliberate
@@ -116,11 +124,49 @@ def _make_logistic(*, penalty=None, solver="lbfgs", max_iter=10000,
     return LogisticRegression(**kw)
 
 
-def _bootstrap_iteration(b, X_all, y, inv_sqrt_w, base_seed, l1_ratios, tol, n_jobs):
+def _column_stats(X_all, n_linear, standardize):
+    """Per-column centre and standard deviation of the candidate matrix.
+
+    Only the first ``n_linear`` columns (the raw linear terms) are centred;
+    rule and expert columns are scaled but not centred, which keeps them
+    sparse. With ``standardize=False`` the centre is 0 and the scale 1
+    (pre-0.7 behaviour).
+    """
+    p = X_all.shape[1]
+    if not standardize:
+        return np.zeros(p), np.ones(p)
+    mean = np.asarray(X_all.mean(axis=0)).ravel()
+    if sparse.issparse(X_all):
+        sq = np.asarray(X_all.multiply(X_all).mean(axis=0)).ravel()
+    else:
+        sq = np.asarray((X_all ** 2).mean(axis=0)).ravel()
+    sd = np.sqrt(np.maximum(sq - mean ** 2, 0.0))
+    sd = np.where(sd > 1e-12, sd, 1.0)
+    center = np.zeros(p)
+    center[:n_linear] = mean[:n_linear]
+    return center, sd
+
+
+def _solver_matrix(Z, center, scale):
+    """Matrix seen by the solver: ``(Z - center) * scale``.
+
+    Returns CSR when nothing is centred, a dense array otherwise.
+    """
+    if sparse.issparse(Z):
+        Zs = sparse.csr_matrix(Z.multiply(scale))
+    else:
+        Zs = np.asarray(Z, dtype=np.float64) * scale
+    if np.any(center != 0):
+        dense = Zs.toarray() if sparse.issparse(Zs) else Zs
+        return dense - center * scale
+    return Zs
+
+
+def _bootstrap_iteration(b, X_all, y, center, scale, base_seed, l1_ratios, tol, n_jobs):
     """Run a single bootstrap iteration (for joblib parallelization)."""
     rng = np.random.RandomState(base_seed + b)
     idx = rng.choice(len(y), size=len(y), replace=True)
-    X_boot = X_all[idx].multiply(inv_sqrt_w)
+    X_boot = _solver_matrix(X_all[idx], center, scale)
     y_boot = y[idx]
 
     log_reg = _make_logistic_cv(
@@ -329,9 +375,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Minimum frequency (0-1) a rule must be selected across bootstraps
         to be retained. Must be in (0, 1].
 
-    confirmatory_penalty : float, default=1e-8
-        Penalty weight for confirmatory rules. Near-zero ensures they are
-        never eliminated. Must be > 0.
+    confirmatory_penalty : float, default=1e-4
+        Penalty weight for confirmatory rules. Must be > 0. Confirmatory
+        columns are multiplied by 1/sqrt(w) before the solver, so very
+        small values (the former default 1e-8, i.e. a factor 1e4) make
+        saga stop far from the optimum without a ConvergenceWarning; see
+        docs/refinement/notes/FINDINGS_2026-11-22.md. Inclusion does not
+        depend on this value: confirmatory rules bypass the bootstrap filter
+        and a post-hoc refit restores any that the solver zeroes.
 
     optional_penalty : float, default=0.3
         Penalty weight for optional (analyst-suggested) rules. Lower than
@@ -348,6 +399,17 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     n_jobs : int or None, default=None
         Number of CPU cores for cross-validation. ``None`` means 1 core.
         Use ``-1`` for all cores (caution on shared infrastructure).
+
+    standardize : bool, default=True
+        Standardise the candidate columns before weighting and fitting:
+        linear terms are centred and divided by their standard deviation,
+        rule and expert columns are divided by their standard deviation.
+        Statistics come from the training data and are stored for
+        prediction. Penalty weights then apply to standardised
+        coefficients (as glmnet's ``penalty.factor``). Coefficients and the
+        intercept are always reported on the original scale. Set to False
+        together with ``confirmatory_penalty=1e-8`` to reproduce models
+        fitted before version 0.7.
 
     calibration : str or None, default=None
         Post-hoc probability calibration method. ``None`` disables
@@ -417,7 +479,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         random_state=42,
         n_bootstrap=10,
         rule_threshold=0.8,
-        confirmatory_penalty=1e-8,
+        confirmatory_penalty=1e-4,
         optional_penalty=0.3,
         l1_ratios=None,
         tol=1e-4,
@@ -425,6 +487,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         calibration=None,
         deterministic=True,
         thread_limit=1,
+        standardize=True,
     ):
         self.n_estimators = n_estimators
         self.tree_size = tree_size
@@ -440,6 +503,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.calibration = calibration
         self.deterministic = deterministic
         self.thread_limit = thread_limit
+        self.standardize = standardize
 
     # ------------------------------------------------------------------
     # Validation
@@ -647,6 +711,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             # inv_sqrt_w: feature scaling so effective L2 penalty = l2*w_j*b_j^2
             inv_sqrt_w = 1.0 / np.sqrt(np.maximum(penalty_weights, 1e-12))
 
+            # Standardise columns (statistics from the training data), then
+            # apply the penalty weights: solver sees (Z - center) * scale.
+            col_center, col_sd = _column_stats(
+                X_all, X.shape[1], self.standardize
+            )
+            col_scale = inv_sqrt_w / col_sd
+            self.col_center_ = col_center
+            self.col_sd_ = col_sd
+
             # === Step 4: Bootstrap stabilization ===
             logger.info(
                 "Step 4: Bootstrap stabilization (%d iterations, "
@@ -656,7 +729,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             results = Parallel(n_jobs=bootstrap_n_jobs)(
                 delayed(_bootstrap_iteration)(
-                    b, X_all, y, inv_sqrt_w,
+                    b, X_all, y, col_center, col_scale,
                     self._BASE_SEED, self.l1_ratios, self.tol, inner_n_jobs,
                 )
                 for b in range(self.n_bootstrap)
@@ -708,9 +781,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                     "lowering rule_threshold or increasing n_bootstrap."
                 )
 
-            X_stable = X_all[:, self.stable_mask_]
             w_stable = inv_sqrt_w[self.stable_mask_]
-            X_stable_weighted = X_stable.multiply(w_stable)
+            self.stable_center_ = col_center[self.stable_mask_]
+            self.stable_scale_ = col_scale[self.stable_mask_]
+            X_stable_weighted = _solver_matrix(
+                X_all[:, self.stable_mask_], self.stable_center_,
+                self.stable_scale_,
+            )
 
             self.final_model_ = _make_logistic_cv(
                 l1_ratios=self.l1_ratios,
@@ -736,7 +813,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                     "Executing post-hoc constrained refit to enforce "
                     "inclusion."
                 )
-                self._refit_with_confirmatory(X_all, y, inv_sqrt_w)
+                self._refit_with_confirmatory(X_all, y)
                 self._verify_confirmatory()
 
                 if not self.confirmatory_all_active_:
@@ -750,7 +827,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             # === Step 7b: Sign check + absorption diagnostics ===
             self._warn_sign_violations()
             self.confirmatory_diagnostics_ = (
-                self._compute_confirmatory_diagnostics(X_all, y, inv_sqrt_w)
+                self._compute_confirmatory_diagnostics(X_all, y)
                 if confirmatory_rules else []
             )
 
@@ -774,9 +851,6 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                     method=self.calibration,
                     cv=5,
                 )
-                X_stable_weighted = X_all[:, self.stable_mask_].multiply(
-                    inv_sqrt_w[self.stable_mask_]
-                )
                 self.calibrator_.fit(X_stable_weighted, y)
 
         return self
@@ -785,7 +859,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     # Post-hoc confirmatory enforcement
     # ------------------------------------------------------------------
 
-    def _refit_with_confirmatory(self, X_all, y, inv_sqrt_w):
+    def _refit_with_confirmatory(self, X_all, y):
         """Refit the final model with confirmatory features unpenalized.
 
         Falls back to a single unpenalized logistic regression on all stable
@@ -802,9 +876,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         if not confirmatory_mask_in_stable.any():
             return
 
-        X_stable = X_all[:, self.stable_mask_]
-        w_stable = inv_sqrt_w[self.stable_mask_]
-        X_stable_weighted = X_stable.multiply(w_stable)
+        X_stable_weighted = _solver_matrix(
+            X_all[:, self.stable_mask_], self.stable_center_, self.stable_scale_,
+        )
 
         try:
             lr_unpenalized = _make_logistic(
@@ -875,12 +949,27 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         X_all = self._build_full_matrix(X)
 
-        X_stable = X_all[:, self.stable_mask_]
-        # scipy >= 1.15 returns COO from .multiply(); convert so callers can
-        # index rows/elements (e.g. DualModel.explain).
-        result = sparse.csr_matrix(X_stable.multiply(self.stable_inv_sqrt_w_))
+        center, scale = self._stable_transform()
+        # CSR (or dense when centred) so callers can index rows/elements.
+        result = _solver_matrix(X_all[:, self.stable_mask_], center, scale)
         self._pred_cache_ = (cache_key, result)
         return result
+
+    def _stable_transform(self):
+        """(center, scale) for stable columns; old models have no centre."""
+        scale = getattr(self, "stable_scale_", None)
+        if scale is None:
+            scale = self.stable_inv_sqrt_w_
+        center = getattr(self, "stable_center_", None)
+        if center is None:
+            center = np.zeros_like(scale)
+        return center, scale
+
+    def _build_stable_raw_matrix(self, X):
+        """Unscaled stable columns (rule activations, raw linear values)."""
+        X_all = self._build_full_matrix(np.asarray(X, dtype=np.float64))
+        Z = X_all[:, self.stable_mask_]
+        return Z.toarray() if sparse.issparse(Z) else np.asarray(Z)
 
     def _build_full_matrix(self, X):
         """Unweighted candidate matrix [linear | generated rules | expert rules]."""
@@ -939,28 +1028,31 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             model.fit(Xw, y)
         return model.coef_[0]
 
-    def _compute_confirmatory_diagnostics(self, X_all, y, inv_sqrt_w,
-                                          corr_threshold=None):
+    def _compute_confirmatory_diagnostics(self, X_all, y, corr_threshold=None):
         """Per confirmatory rule: correlation, VIF and absorption.
 
         For each confirmatory rule c among the stable features:
 
         - ``max_abs_corr`` / ``most_correlated``: largest absolute Pearson
-          correlation between c's column and any other stable column.
+          correlation between c's column and any other *candidate* column
+          (linear terms, generated rules, expert rules), whether or not it
+          passed the bootstrap filter.
+        - ``n_correlated``: candidate columns with ``|corr| >= corr_threshold``.
         - ``vif``: variance inflation factor of c's column regressed (OLS,
           with intercept) on all other stable columns.
         - ``correlated_coef_shift``: for every stable rule with
           ``|corr| >= corr_threshold``, the change in its coefficient when c
           is removed. Both fits (with and without c) are ridge refits with
-          the final model's C and the same per-feature weights (see
-          ``_fit_fixed``). Large shifts mean c is absorbing weight those
+          the final model's C, the same standardisation and the same
+          per-feature weights (see ``_fit_fixed``). Large shifts mean c is absorbing weight those
           rules would otherwise carry.
         - ``absorption_ratio``: sum of ``|shift|`` over correlated rules
           divided by ``|coefficient of c|`` in the reference refit.
-        - ``displaced_rules``: correlated rules that passed the bootstrap
-          filter (so the data supports them) but have a zero coefficient in
-          the final model. This reads the fitted model directly and does
-          not depend on the counterfactual refit.
+        - ``displaced_rules``: correlated candidate columns that are not
+          active in the final model, either removed by the bootstrap filter
+          or zeroed by the final fit, with their bootstrap selection
+          frequency (``displaced_bootstrap_frequency``). Absorption at the
+          filter stage shows up here and nowhere else.
         """
         if corr_threshold is None:
             corr_threshold = self._DIAG_CORR_THRESHOLD
@@ -969,12 +1061,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Xs = X_all[:, stable_idx]
         Xs = Xs.toarray() if sparse.issparse(Xs) else np.asarray(Xs)
         Xs = Xs.astype(np.float64)
-        ws = np.asarray(inv_sqrt_w)[stable_idx]
+        center, ws = self._stable_transform()
+        Xt = (Xs - center) * ws          # matrix the solver sees
         names = [self.rule_names_[i] for i in stable_idx]
         n, p = Xs.shape
 
         C, _ = self._final_hyperparams()
-        coef_ref = self._fit_fixed(Xs * ws, y, C) * ws
+        coef_ref = self._fit_fixed(Xt, y, C) * ws
 
         # Correlation matrix (zero-variance columns get correlation 0)
         Xc = Xs - Xs.mean(axis=0)
@@ -984,6 +1077,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         corr = Z.T @ Z
         corr[:, sd <= 1e-12] = 0.0
         corr[sd <= 1e-12, :] = 0.0
+
+        # Correlation of each confirmatory column with every candidate column
+        Xf = X_all.toarray() if sparse.issparse(X_all) else np.asarray(X_all)
+        Xf = Xf.astype(np.float64)
+        Xfc = Xf - Xf.mean(axis=0)
+        sdf = np.sqrt((Xfc ** 2).sum(axis=0))
+        ok_f = sdf > 1e-12
+        Zf = Xfc / np.where(ok_f, sdf, 1.0)
+        stable_pos = {int(k): j for j, k in enumerate(stable_idx)}
 
         status_by_name = {
             f"confirmatory:{s['name']}": s
@@ -1013,15 +1115,30 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 r2 = 1.0 - float(resid @ resid) / float(Xc[:, j] @ Xc[:, j])
                 vif = float("inf") if r2 >= 1.0 - 1e-12 else 1.0 / (1.0 - r2)
 
-            displaced = [
-                names[k] for k in correlated if abs(true_coefs[k]) <= 1e-10
-            ]
+            jf = int(stable_idx[j])
+            if ok_f[jf]:
+                r_all = np.abs(Zf[:, jf] @ Zf)
+                r_all[~ok_f] = 0.0
+            else:
+                r_all = np.zeros(Xf.shape[1])
+            r_all[jf] = 0.0
+            cand = np.where(r_all >= corr_threshold)[0]
+            if r_all.max() > 0:
+                kmax_f = int(np.argmax(r_all))
+                max_corr = float(r_all[kmax_f])
+                most_corr = self.rule_names_[kmax_f]
+
+            displaced, displaced_freq = [], {}
+            for k in cand:
+                pos = stable_pos.get(int(k))
+                if pos is None or abs(true_coefs[pos]) <= 1e-10:
+                    nm = self.rule_names_[k]
+                    displaced.append(nm)
+                    displaced_freq[nm] = float(self.bootstrap_frequencies_[k])
             shifts = {}
             absorption = 0.0
             if correlated.size:
-                coef_wo = self._fit_fixed(
-                    Xs[:, others] * ws[others], y, C
-                ) * ws[others]
+                coef_wo = self._fit_fixed(Xt[:, others], y, C) * ws[others]
                 pos_in_others = {k: i for i, k in enumerate(others)}
                 for k in correlated:
                     shifts[names[k]] = float(
@@ -1041,11 +1158,12 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 "most_correlated": most_corr,
                 "vif": vif,
                 "corr_threshold": float(corr_threshold),
-                "n_correlated": int(correlated.size),
+                "n_correlated": int(cand.size),
                 "correlated_coef_shift": shifts,
                 "absorption_ratio": absorption,
                 "n_displaced": len(displaced),
                 "displaced_rules": displaced,
+                "displaced_bootstrap_frequency": displaced_freq,
             })
         return diagnostics
 
@@ -1082,13 +1200,11 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64).ravel()
         X_all = self._build_full_matrix(X)
-        inv_sqrt_w = np.ones(X_all.shape[1])
-        inv_sqrt_w[self.stable_mask_] = self.stable_inv_sqrt_w_
         with threadpool_limits(
             limits=self.thread_limit if self.deterministic else None
         ):
             return self._compute_confirmatory_diagnostics(
-                X_all, y, inv_sqrt_w, corr_threshold=corr_threshold,
+                X_all, y, corr_threshold=corr_threshold,
             )
 
     def _warn_sign_violations(self):
@@ -1120,7 +1236,16 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         true_coefs : ndarray of shape (n_stable_features,)
         """
         fitted_coefs = self.final_model_.coef_[0]
-        return fitted_coefs * self.stable_inv_sqrt_w_
+        _, scale = self._stable_transform()
+        return fitted_coefs * scale
+
+    def _get_true_intercept(self):
+        """Intercept on the original scale (undoes column centring)."""
+        center, _ = self._stable_transform()
+        return float(
+            self.final_model_.intercept_[0]
+            - np.dot(self._get_true_coefficients(), center)
+        )
 
     def get_selected_rules(self):
         """Return names of selected (stable) rules with non-zero coefficients.
@@ -1291,14 +1416,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         """
         check_is_fitted(self, ["base_rulefit_", "final_model_"])
 
-        X_weighted = self._build_predict_matrix(X)
+        # Original-scale coefficients times original-scale values (raw
+        # linear values, 0/1 rule activations). Before 0.7 this used the
+        # weighted matrix, which inflated expert-rule contributions by
+        # 1/sqrt(w).
+        X_dense = self._build_stable_raw_matrix(X)
         true_coefs = self._get_true_coefficients()
         stable_indices = np.where(self.stable_mask_)[0]
-
-        if sparse.issparse(X_weighted):
-            X_dense = np.asarray(X_weighted.todense())
-        else:
-            X_dense = np.asarray(X_weighted)
 
         all_reasons = []
         for i in range(X_dense.shape[0]):
@@ -1356,7 +1480,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         return {
             "model_type": "ExpertRuleFit",
-            "intercept": float(self.final_model_.intercept_[0]),
+            "intercept": self._get_true_intercept(),
+            "standardize": getattr(self, "standardize", False),
             "n_candidate_features": len(self.rule_names_),
             "n_stable_features": int(self.stable_mask_.sum()),
             "n_active_features": sum(1 for r in rules if r["active"]),
@@ -1451,7 +1576,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                         f"  {d['name']}: max|r|={d['max_abs_corr']:.2f}"
                         f" (with {d['most_correlated']}), VIF={vif_txt},"
                         f" correlated rules={d['n_correlated']}"
-                        f" (zeroed in final model: {d['n_displaced']}),"
+                        f" (inactive in final model: {d['n_displaced']}),"
                         f" absorption ratio={d['absorption_ratio']:.2f}"
                     )
 
@@ -1509,6 +1634,10 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "final_model_": self.final_model_,
             "stable_mask_": self.stable_mask_,
             "stable_inv_sqrt_w_": self.stable_inv_sqrt_w_,
+            "stable_center_": getattr(self, "stable_center_", None),
+            "stable_scale_": getattr(self, "stable_scale_", None),
+            "col_center_": getattr(self, "col_center_", None),
+            "col_sd_": getattr(self, "col_sd_", None),
             "bootstrap_frequencies_": self.bootstrap_frequencies_,
             "rule_names_": self.rule_names_,
             "feature_names_": self.feature_names_,
@@ -1552,10 +1681,18 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         state = joblib.load(path)
 
         model = cls(**state["params"])
+        if "standardize" not in state["params"]:
+            model.standardize = False  # saved before standardisation existed
         model.base_rulefit_ = state["base_rulefit_"]
         model.final_model_ = state["final_model_"]
         model.stable_mask_ = state["stable_mask_"]
         model.stable_inv_sqrt_w_ = state["stable_inv_sqrt_w_"]
+        # Models saved before 0.7 were not standardised: centre 0,
+        # scale = penalty weighting only (handled by _stable_transform).
+        model.stable_center_ = state.get("stable_center_")
+        model.stable_scale_ = state.get("stable_scale_")
+        model.col_center_ = state.get("col_center_")
+        model.col_sd_ = state.get("col_sd_")
         model.bootstrap_frequencies_ = state["bootstrap_frequencies_"]
         model.rule_names_ = state["rule_names_"]
         model.feature_names_ = state["feature_names_"]

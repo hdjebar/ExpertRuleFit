@@ -82,7 +82,7 @@ assert erf.confirmatory_all_active_, "COMPLIANCE FAILURE: confirmatory rule elim
 erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 ```
 
-**How it works:** Confirmatory rules are given a very small penalty weight using weighted feature scaling. We fit on `X_j / sqrt(w_j)`, which reduces the effective elastic-net penalty on confirmatory coefficients (L2 scaled by `w_j`, L1 scaled by `sqrt(w_j)`). With `w_j = 1e-8`, confirmatory rules are very unlikely to be shrunk to zero by regularization. **Important:** A confirmatory coefficient can still be near/at zero if the rule carries no incremental signal, is perfectly collinear, or due to solver tolerances. ExpertRuleFit detects this and performs a post-hoc refit to enforce inclusion.
+**How it works:** Candidate columns are first standardised (`standardize=True`, statistics from the training data, stored for prediction; coefficients are reported on the original scale). Confirmatory rules then get a small penalty weight through feature scaling: we fit on `Z_j / sqrt(w_j)`, which reduces the effective elastic-net penalty on their coefficients (L2 scaled by `w_j`, L1 by `sqrt(w_j)`). The default is `w_c = 1e-4`. Much smaller values (the former default `1e-8`) make one column 10⁴ times larger than the others; the saga solver then stops far from the optimum without warning and can collapse the rest of the model (see [findings](docs/refinement/notes/FINDINGS_2026-11-22.md)). **Important:** A confirmatory coefficient can still be near/at zero if the rule carries no incremental signal, is perfectly collinear, or due to solver tolerances. ExpertRuleFit detects this and performs a post-hoc refit to enforce inclusion.
 
 ### Expected sign and absorption diagnostics
 
@@ -98,10 +98,11 @@ erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
 
 erf.confirmatory_sign_ok_        # False if any declared sign is contradicted
 erf.diagnose_confirmatory()      # per confirmatory rule (training data):
-#   max_abs_corr / most_correlated  – strongest correlation with another retained column
-#   vif                             – variance inflation factor
-#   displaced_rules                 – correlated rules (|r| >= 0.5) that passed the
-#                                     bootstrap filter but were zeroed in the final model
+#   max_abs_corr / most_correlated  – strongest correlation with any other candidate column
+#   vif                             – variance inflation factor (among retained columns)
+#   displaced_rules                 – correlated candidates (|r| >= 0.5) inactive in the
+#                                     final model (dropped by the bootstrap filter or
+#                                     zeroed), with their bootstrap frequency
 #   correlated_coef_shift           – change in those rules' coefficients when the
 #                                     confirmatory rule is removed (ridge refits)
 erf.diagnose_confirmatory(X_val, y_val, corr_threshold=0.7)   # recompute on other data
