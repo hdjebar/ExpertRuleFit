@@ -83,7 +83,14 @@ def load_dataset(name, data_dir, taiwan_full=False):
 
 
 class Preprocessor:
-    """Ordinal-encode categoricals, median-impute, standardise (fit on train)."""
+    """Ordinal-encode categoricals, median-impute, standardise (fit on train).
+
+    ``scale=False`` skips the standardisation (ExpertRuleFit >= 0.7
+    standardises internally, and expert rules can then use raw units).
+    """
+
+    def __init__(self, scale=True):
+        self.scale = scale
 
     def fit(self, df):
         from sklearn.impute import SimpleImputer
@@ -109,7 +116,16 @@ class Preprocessor:
         return np.column_stack(parts).astype(np.float64)
 
     def transform(self, df):
-        return self.scaler.transform(self._raw(df))
+        X = self._raw(df)
+        return self.scaler.transform(X) if self.scale else X
+
+    def column(self, name):
+        return self.feature_names.index(name)
+
+    def code(self, name, category):
+        """Ordinal code of a category label in an encoded column."""
+        cats = list(self.enc.categories_[self.cat.index(name)])
+        return float(cats.index(category))
 
     @property
     def feature_names(self):
