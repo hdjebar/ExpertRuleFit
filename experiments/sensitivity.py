@@ -192,13 +192,14 @@ def summarize(out_dir):
     plt.close(fig)
 
     md = ["| Dataset | w_c | w_o | AUC | Brier | Active | Jaccard vs default | Conf. coef | Sign OK "
-          "| Optional kept | Displaced | Final C | saga iters (median) |",
-          "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+          "| Optional kept | Displaced | Final C | saga iters (median) | ConvergenceWarnings | Fit s |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in summ.itertuples():
         md.append(f"| {r.dataset} | {r.w_c:g} | {r.w_o:g} | {r.auc:.3f} | {r.brier:.4f} | "
                   f"{r.n_active} | {r.jaccard_vs_default:.2f} | {r.confirmatory_coef:+.3f} | "
                   f"{r.confirmatory_sign_ok} | {r.optional_active} | {r.n_displaced} | "
-                  f"{r.final_C:.3g} | {r.final_n_iter_median:.0f} |")
+                  f"{r.final_C:.3g} | {r.final_n_iter_median:.0f} | "
+                  f"{r.convergence_warnings} | {r.fit_seconds:.0f} |")
     (out_dir / "table.md").write_text("\n".join(md) + "\n")
     return summ
 

@@ -110,6 +110,16 @@ erf.diagnose_confirmatory(X_val, y_val, corr_threshold=0.7)   # recompute on oth
 
 `RuleSpec(..., expected_sign=+1)` carries the sign through `to_rule_dict()` and JSON save/load. `summary()` and `audit_bundle()` include the sign status and the diagnostics. A near-unpenalised confirmatory rule that duplicates generated rules will take their weight; the diagnostics make that visible, they do not prevent it.
 
+### Choosing `confirmatory_penalty` (w_c)
+
+Preliminary sensitivity results (German Credit only, one split, pinned stack; `experiments/results/sensitivity/`):
+
+- **w_c ≥ 1e-2 is the reliable range.** It gave no saga ConvergenceWarnings, test AUC 0.784–0.797, and fits 3× faster than at 1e-4. Below 1e-2, warnings appear (3–6 per fit at the 1e-4 default, hundreds at 1e-8), and coefficients of confirmatory rules are not trustworthy.
+- **Avoid 1e-8** (the pre-0.7 default). Even with standardisation it lowered AUC by about 0.03–0.04 and degraded the Brier score (0.229 vs about 0.16).
+- **Expect sign contradictions** when a confirmatory rule duplicates terms the model already has. "Checking account < 0 DM" got a negative conditional coefficient because the checking-status linear term and generated rules carried the effect. Check `confirmatory_sign_ok_` and `diagnose_confirmatory()`.
+
+The default stays at 1e-4 until the HMEQ and Taiwan runs confirm the range.
+
 ### With EBM-Discovered Interactions (automated pipeline)
 
 ```python
