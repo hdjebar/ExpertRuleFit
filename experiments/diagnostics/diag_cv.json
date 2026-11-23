@@ -1,0 +1,38 @@
+[
+ {
+  "setting": "w_c=1e-8",
+  "C": 0.046415888336127774,
+  "l1_ratio": 0.1,
+  "n_iter_min": 2,
+  "n_iter_median": 17.0,
+  "n_iter_max": 9827,
+  "conv_warnings": 0,
+  "nonzero_other": 25,
+  "conf_coef": -1.0550659363817454,
+  "seconds": 42.8
+ },
+ {
+  "setting": "w_c=1e-4",
+  "C": 2.782559402207126,
+  "l1_ratio": 0.7,
+  "n_iter_min": 1,
+  "n_iter_median": 169.0,
+  "n_iter_max": 2974,
+  "conv_warnings": 0,
+  "nonzero_other": 24,
+  "conf_coef": 0.12746135133541647,
+  "seconds": 21.2
+ },
+ {
+  "setting": "unrescaled (w=1)",
+  "C": 0.3593813663804626,
+  "l1_ratio": 0.1,
+  "n_iter_min": 1,
+  "n_iter_median": 108.0,
+  "n_iter_max": 1826,
+  "conv_warnings": 0,
+  "nonzero_other": 23,
+  "conf_coef": 0.0,
+  "seconds": 10.5
+ }
+]

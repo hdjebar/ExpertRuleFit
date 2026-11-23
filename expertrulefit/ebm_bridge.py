@@ -1,8 +1,13 @@
 """EBM → ExpertRuleFit bridge.
 
 Uses InterpretML's Explainable Boosting Machine (EBM) to discover
-feature interactions, then converts them to confirmatory/optional rules
-for ExpertRuleFit.
+feature interactions, then converts them to rules for ExpertRuleFit.
+
+Rules discovered here are *data-driven*, not expert-imposed, so they are
+returned as **optional** rules by default: they get a reduced penalty but
+must still survive bootstrap filtering. Promote one to ``confirmatory`` only
+after a domain expert has reviewed and accepted it (``rule_type="confirmatory"``
+or by moving the dict into ``confirmatory_rules`` yourself).
 
 Pipeline:
     1. Fit EBM (GA2M) → discovers pairwise interactions automatically
@@ -10,22 +15,22 @@ Pipeline:
     3. For each interaction pair, find the best threshold combination
        by scanning data quantiles and maximizing correlation with target
     4. Convert to threshold rules: "feature_i > t_i AND feature_j > t_j"
-    5. Return as confirmatory_rules list for ExpertRuleFit.fit()
+    5. Return as an optional_rules list for ExpertRuleFit.fit()
 
 Usage:
     from expertrulefit.ebm_bridge import discover_interaction_rules
 
-    rules = discover_interaction_rules(X_train, y_train, feature_names,
-                                       top_k=3, rule_type="confirmatory")
+    rules, ebm = discover_interaction_rules(X_train, y_train, feature_names,
+                                            top_k=3)   # optional by default
     erf = ExpertRuleFit(max_rules=50)
-    erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=rules)
+    erf.fit(X_train, y_train, feature_names=fn, optional_rules=rules)
 """
 
 import numpy as np
 
 
 def discover_interaction_rules(
-    X, y, feature_names, top_k=3, rule_type="confirmatory",
+    X, y, feature_names, top_k=3, rule_type="optional",
     max_interactions=10, random_state=42,
 ):
     """Discover interaction rules from EBM and format for ExpertRuleFit.
@@ -37,7 +42,10 @@ def discover_interaction_rules(
     Parameters
     ----------
     X : array-like of shape (n_samples, n_features)
-        Training data (numpy array or pandas DataFrame).
+        Training data (numpy array or pandas DataFrame). Pass training
+        rows only: the EBM and the threshold scan see every row given here.
+        Inside cross-validation or stacking, call this function per fold
+        (``DualModel.fit(..., rule_discovery=...)`` does that).
 
     y : array-like of shape (n_samples,)
         Binary target.
@@ -48,9 +56,13 @@ def discover_interaction_rules(
     top_k : int, default=3
         Number of top interactions to extract.
 
-    rule_type : str, default="confirmatory"
-        Either "confirmatory" (near-zero penalty, never eliminated)
-        or "optional" (reduced penalty, can be eliminated).  The returned
+    rule_type : str, default="optional"
+        Either "optional" (reduced penalty, can be eliminated by bootstrap
+        filtering) or "confirmatory" (near-zero penalty, never eliminated).
+        The default is "optional" because these rules are discovered from
+        the data, not imposed by an expert: making them confirmatory would
+        lock accidental correlations into the model. Use "confirmatory" only
+        for rules an expert has reviewed and accepted.  The returned
         rule dicts include a ``category`` key set to this value, and the
         list is ready to pass directly to the matching ``ExpertRuleFit.fit``
         parameter (``confirmatory_rules`` or ``optional_rules``).
@@ -77,6 +89,11 @@ def discover_interaction_rules(
     except ImportError:
         raise ImportError(
             "interpret and pandas required: pip install interpret pandas"
+        )
+
+    if rule_type not in ("confirmatory", "optional"):
+        raise ValueError(
+            f"rule_type must be 'confirmatory' or 'optional', got '{rule_type}'"
         )
 
     X = np.asarray(X, dtype=np.float64)
@@ -106,11 +123,6 @@ def discover_interaction_rules(
     # Sort by importance, take top_k
     interactions.sort(key=lambda x: x["importance"], reverse=True)
     interactions = interactions[:top_k]
-
-    if rule_type not in ("confirmatory", "optional"):
-        raise ValueError(
-            f"rule_type must be 'confirmatory' or 'optional', got '{rule_type}'"
-        )
 
     # Step 2: For each interaction, find optimal thresholds from data
     rules = []
@@ -148,6 +160,9 @@ def discover_interaction_rules(
             "name": rule_name,
             "evaluate": rule_fn,
             "category": rule_type,
+            # Provenance, so audits can tell data-discovered rules apart
+            # from expert-imposed ones.
+            "source": "ebm_discovered",
         })
 
     return rules, ebm

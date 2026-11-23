@@ -1,0 +1,44 @@
+[
+ {
+  "setting": "w_c=1e-8",
+  "max_sq_row_norm": 100000069.72848079,
+  "n_iter_default": 9465,
+  "conv_warn_default": 0,
+  "nonzero_other_default": 25,
+  "n_iter_strict": 2000000,
+  "conv_warn_strict": 1,
+  "nonzero_other_strict": 25,
+  "objective_gap": 156.0070349122732,
+  "max_coef_diff": 1.2898993475352323,
+  "conf_coef_default": -1.0560761865728443,
+  "conf_coef_strict": 0.23382316096238798
+ },
+ {
+  "setting": "w_c=1e-4",
+  "max_sq_row_norm": 10069.728480787671,
+  "n_iter_default": 2548,
+  "conv_warn_default": 0,
+  "nonzero_other_default": 23,
+  "n_iter_strict": 192747,
+  "conv_warn_strict": 0,
+  "nonzero_other_strict": 24,
+  "objective_gap": 0.7071787978597541,
+  "max_coef_diff": 0.3859928659306642,
+  "conf_coef_default": -0.015350132664536055,
+  "conf_coef_strict": -0.10066354391157085
+ },
+ {
+  "setting": "unrescaled (w=1)",
+  "max_sq_row_norm": 70.72848078767109,
+  "n_iter_default": 282,
+  "conv_warn_default": 0,
+  "nonzero_other_default": 25,
+  "n_iter_strict": 1791,
+  "conv_warn_strict": 0,
+  "nonzero_other_strict": 25,
+  "objective_gap": 0.00021735969112057774,
+  "max_coef_diff": 0.015966596068363703,
+  "conf_coef_default": 0.0,
+  "conf_coef_strict": 0.0
+ }
+]

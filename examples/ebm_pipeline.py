@@ -59,6 +59,9 @@ def main():
     rules, ebm = discover_interaction_rules(
         X_train, y_train, fn,
         top_k=3,
+        # Demo only: we promote the EBM rules to confirmatory to show the
+        # preservation mechanism. In practice, data-discovered rules stay
+        # optional (the default) unless an expert has reviewed them.
         rule_type="confirmatory",
         max_interactions=10,
     )

@@ -129,7 +129,8 @@ class DualModel(BaseEstimator, ClassifierMixin):
         self.meta_cv = meta_cv
         self.random_state = random_state
 
-    def fit(self, X, y, feature_names=None, confirmatory_rules=None, optional_rules=None):
+    def fit(self, X, y, feature_names=None, confirmatory_rules=None,
+            optional_rules=None, rule_discovery=None):
         """Fit the dual architecture with cross-validated stacking.
 
         Parameters
@@ -141,6 +142,15 @@ class DualModel(BaseEstimator, ClassifierMixin):
             Regulatory rules for ExpertRuleFit (never eliminated).
         optional_rules : list of dict, optional
             Analyst rules for ExpertRuleFit (reduced penalty).
+        rule_discovery : callable, optional
+            ``rule_discovery(X, y, feature_names) -> list of rule dicts``,
+            e.g. ``lambda X, y, fn: discover_interaction_rules(X, y, fn)[0]``.
+            Called inside every stacking fold on the training fold only,
+            and once on the full data for the final model; the returned
+            rules are added to ``optional_rules``. Use this instead of
+            passing rules discovered on the whole training set: such rules
+            have thresholds tuned on rows that later serve as out-of-fold
+            validation rows, which makes the stacking weights optimistic.
 
         Returns
         -------
@@ -197,12 +207,16 @@ class DualModel(BaseEstimator, ClassifierMixin):
             ebm_fold.fit(df_tr, y_tr)
             oof_ebm[val_idx] = ebm_fold.predict_proba(df_val)[:, 1]
 
-            # ExpertRuleFit fold
+            # ExpertRuleFit fold (data-driven rules rediscovered on the
+            # training fold only, so validation rows never shape them)
+            fold_optional = list(optional_rules)
+            if rule_discovery is not None:
+                fold_optional += list(rule_discovery(X_tr, y_tr, feature_names))
             erf_fold = ExpertRuleFit(**erf_defaults)
             erf_fold.fit(
                 X_tr, y_tr, feature_names=feature_names,
                 confirmatory_rules=confirmatory_rules,
-                optional_rules=optional_rules,
+                optional_rules=fold_optional,
             )
             oof_erf[val_idx] = erf_fold.predict_proba(X_val)[:, 1]
 
@@ -217,11 +231,14 @@ class DualModel(BaseEstimator, ClassifierMixin):
         self.ebm_ = ExplainableBoostingClassifier(**ebm_defaults)
         self.ebm_.fit(df, y)
 
+        final_optional = list(optional_rules)
+        if rule_discovery is not None:
+            final_optional += list(rule_discovery(X, y, feature_names))
         self.erf_ = ExpertRuleFit(**erf_defaults)
         self.erf_.fit(
             X, y, feature_names=feature_names,
             confirmatory_rules=confirmatory_rules,
-            optional_rules=optional_rules,
+            optional_rules=final_optional,
         )
 
         # Store stacking metadata
@@ -312,7 +329,7 @@ class DualModel(BaseEstimator, ClassifierMixin):
         # Precompute ERF matrix once for all samples (vectorized)
         stable_indices = np.where(self.erf_.stable_mask_)[0]
         true_coefs = self.erf_._get_true_coefficients()
-        X_pred_all = self.erf_._build_predict_matrix(X)
+        X_pred_all = self.erf_._build_stable_raw_matrix(X)  # raw activations
 
         # Precompute active coefficient mask
         active_coef_mask = np.zeros(len(true_coefs), dtype=bool)

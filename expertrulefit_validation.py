@@ -159,9 +159,8 @@ def load_german_credit():
     else:
         y = (y == y.max()).astype(int)
 
-    feature_names = [str(c) for c in X.columns] if hasattr(X, "columns") else [f"f{i}" for i in range(X.shape[1])]
-    X = preprocess(X, feature_names)
-    log.info(f"German Credit: {X.shape[0]} samples, {X.shape[1]} features, {y.mean():.1%} positive rate")
+    X = pd.DataFrame(X).reset_index(drop=True)
+    log.info(f"German Credit: {X.shape[0]} samples, {X.shape[1]} raw features, {y.mean():.1%} positive rate")
     return X, y, [f"f{i}" for i in range(X.shape[1])]
 
 
@@ -185,16 +184,16 @@ def load_taiwan_credit():
             return None, None, None
 
     y = np.asarray(y, dtype=int)
-    feature_names = [str(c) for c in X.columns] if hasattr(X, "columns") else [f"f{i}" for i in range(X.shape[1])]
-    X = preprocess(X, feature_names)
+    X = pd.DataFrame(X).reset_index(drop=True)
 
-    # Subsample to 5000
+    # Subsample 5,000 of the 30,000 rows (seed 42) to bound runtime. Same
+    # row indices as before preprocessing moved inside the split.
     if X.shape[0] > 5000:
         rng = np.random.RandomState(42)
         idx = rng.choice(X.shape[0], size=5000, replace=False)
-        X, y = X[idx], y[idx]
+        X, y = X.iloc[idx].reset_index(drop=True), y[idx]
 
-    log.info(f"Taiwan Credit: {X.shape[0]} samples, {X.shape[1]} features, {y.mean():.1%} positive rate")
+    log.info(f"Taiwan Credit: {X.shape[0]} samples (subsample of 30,000), {X.shape[1]} raw features, {y.mean():.1%} positive rate")
     return X, y, [f"f{i}" for i in range(X.shape[1])]
 
 
@@ -220,38 +219,38 @@ def load_hmeq():
     valid = ~np.isnan(y)
     X, y = X[valid], y[valid].astype(int)
 
-    feature_names = [str(c) for c in X.columns]
-    X = preprocess(X, feature_names)
-    log.info(f"HMEQ: {X.shape[0]} samples, {X.shape[1]} features, {y.mean():.1%} positive rate")
+    X = X.reset_index(drop=True)
+    log.info(f"HMEQ: {X.shape[0]} samples, {X.shape[1]} raw features, {y.mean():.1%} positive rate")
     return X, y, [f"f{i}" for i in range(X.shape[1])]
 
 
-def preprocess(X, feature_names):
-    """Common preprocessing: impute, encode, scale."""
-    if isinstance(X, pd.DataFrame):
-        # Identify categorical columns
-        cat_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
-        num_cols = [c for c in X.columns if c not in cat_cols]
+def preprocess(X_train, X_test):
+    """Impute, encode and scale, with every statistic fitted on X_train only.
 
-        # Impute
-        if num_cols:
-            imp_num = SimpleImputer(strategy="median")
-            X[num_cols] = imp_num.fit_transform(X[num_cols])
-        if cat_cols:
-            imp_cat = SimpleImputer(strategy="most_frequent")
-            X[cat_cols] = imp_cat.fit_transform(X[cat_cols])
-            enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
-            X[cat_cols] = enc.fit_transform(X[cat_cols])
+    Earlier versions fitted the imputer, encoder and scaler on the full
+    dataset before the train/test split, which leaked test-set statistics.
+    """
+    X_train = pd.DataFrame(X_train).copy()
+    X_test = pd.DataFrame(X_test).copy()
+    cat_cols = X_train.select_dtypes(include=["object", "category"]).columns.tolist()
+    num_cols = [c for c in X_train.columns if c not in cat_cols]
 
-        X = X.values.astype(np.float64)
-    else:
-        X = np.asarray(X, dtype=np.float64)
-        imp = SimpleImputer(strategy="median")
-        X = imp.fit_transform(X)
+    if num_cols:
+        imp_num = SimpleImputer(strategy="median").fit(X_train[num_cols])
+        X_train[num_cols] = imp_num.transform(X_train[num_cols])
+        X_test[num_cols] = imp_num.transform(X_test[num_cols])
+    if cat_cols:
+        imp_cat = SimpleImputer(strategy="most_frequent").fit(X_train[cat_cols])
+        tr_cat = imp_cat.transform(X_train[cat_cols])
+        te_cat = imp_cat.transform(X_test[cat_cols])
+        enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1).fit(tr_cat)
+        X_train[cat_cols] = enc.transform(tr_cat)
+        X_test[cat_cols] = enc.transform(te_cat)
 
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X)
-    return X
+    X_train = X_train.values.astype(np.float64)
+    X_test = X_test.values.astype(np.float64)
+    scaler = StandardScaler().fit(X_train)
+    return scaler.transform(X_train), scaler.transform(X_test)
 
 
 # ============================================================
@@ -390,6 +389,8 @@ def run_dataset_benchmark(dataset_name, X, y, feature_names):
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
+    # Preprocessing statistics come from the training split only
+    X_train, X_test = preprocess(X_train, X_test)
 
     results = []
 

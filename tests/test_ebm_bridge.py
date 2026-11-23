@@ -90,6 +90,25 @@ def test_discover_interaction_rules(interaction_data):
     # EBM should be fitted
     assert hasattr(ebm, "term_importances")
 
+    # Data-discovered rules are optional by default (A1) and carry provenance
+    for rule in rules:
+        assert rule["category"] == "optional"
+        assert rule["source"] == "ebm_discovered"
+
+
+def test_default_rule_type_is_optional():
+    """discover_interaction_rules must not promote data rules by default."""
+    import inspect
+    sig = inspect.signature(discover_interaction_rules)
+    assert sig.parameters["rule_type"].default == "optional"
+
+
+def test_invalid_rule_type_fails_before_fitting():
+    X = np.zeros((10, 2))
+    y = np.array([0, 1] * 5)
+    with pytest.raises(ValueError, match="rule_type"):
+        discover_interaction_rules(X, y, ["a", "b"], rule_type="mandatory")
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
