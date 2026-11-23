@@ -42,7 +42,10 @@ def discover_interaction_rules(
     Parameters
     ----------
     X : array-like of shape (n_samples, n_features)
-        Training data (numpy array or pandas DataFrame).
+        Training data (numpy array or pandas DataFrame). Pass training
+        rows only: the EBM and the threshold scan see every row given here.
+        Inside cross-validation or stacking, call this function per fold
+        (``DualModel.fit(..., rule_discovery=...)`` does that).
 
     y : array-like of shape (n_samples,)
         Binary target.

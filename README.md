@@ -157,6 +157,9 @@ dm.summary()  # Shows: EBM weight=91%, ERF weight=9%, intercept
 explanations = dm.explain(X_test[:1])
 ```
 
+> **Leakage.** Each stacking fold fits EBM and ExpertRuleFit on its training rows only (tested in `tests/test_leakage.py`). Do not pass rules from `discover_interaction_rules` run on the whole training set: their thresholds would have seen the out-of-fold rows. Pass the discovery step instead, and it is rerun inside each fold:
+> `dm.fit(X_train, y_train, feature_names=fn, rule_discovery=lambda X, y, f: discover_interaction_rules(X, y, f)[0])`
+
 **Architecture:** `Features → EBM(p_ebm) + ExpertRuleFit(p_erf) → LogisticRegression → final_score`. Every layer is interpretable — no post-hoc approximations. Cross-validated OOF predictions prevent stacking overfitting.
 
 ## Prediction & Classification
