@@ -106,15 +106,17 @@ erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 A confirmatory rule can declare the direction the expert expects (`+1`: the rule should raise P(y=1); `-1`: lower it). The sign is **checked, not enforced**: after `fit`, a contradiction sets `confirmatory_sign_ok_ = False` and emits a `UserWarning`, but the rule stays in the model.
 
 ```python
-confirmatory = [{
-    "name": "High cash ratio",
-    "evaluate": lambda X, fn: (X[:, fn.index("cash_ratio")] > 0.4).astype(float),
-    "expected_sign": +1,
-}]
+confirmatory = [
+    {
+        "name": "High cash ratio",
+        "evaluate": lambda X, fn: (X[:, fn.index("cash_ratio")] > 0.4).astype(float),
+        "expected_sign": +1,
+    }
+]
 erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
 
-erf.confirmatory_sign_ok_        # False if any declared sign is contradicted
-erf.diagnose_confirmatory()      # per confirmatory rule (training data):
+erf.confirmatory_sign_ok_  # False if any declared sign is contradicted
+erf.diagnose_confirmatory()  # per confirmatory rule (training data):
 #   max_abs_corr / most_correlated  – strongest correlation with any other candidate column
 #   vif                             – variance inflation factor (among retained columns)
 #   displaced_rules                 – correlated candidates (|r| >= 0.5) inactive in the
@@ -122,7 +124,7 @@ erf.diagnose_confirmatory()      # per confirmatory rule (training data):
 #                                     zeroed), with their bootstrap frequency
 #   correlated_coef_shift           – change in those rules' coefficients when the
 #                                     confirmatory rule is removed (ridge refits)
-erf.diagnose_confirmatory(X_val, y_val, corr_threshold=0.7)   # recompute on other data
+erf.diagnose_confirmatory(X_val, y_val, corr_threshold=0.7)  # recompute on other data
 ```
 
 `RuleSpec(..., expected_sign=+1)` carries the sign through `to_rule_dict()` and JSON save/load. `summary()` and `audit_bundle()` include the sign status and the diagnostics. A near-unpenalised confirmatory rule that duplicates generated rules will take their weight; the diagnostics make that visible, they do not prevent it.
@@ -142,11 +144,11 @@ After standardisation, solver conditioning depends on the 1/√w_c ratio rather 
 With `confirmatory_mode="refit"`, a confirmatory rule is kept in the model but its sign is only checked. With `confirmatory_mode="constrained"` (the default since 0.8.0), the final model is one convex problem: confirmatory coefficients are **unpenalised** and bounded by their `expected_sign` (≥ 0 for +1, ≤ 0 for −1), the other columns keep the elastic net chosen by cross-validation, and optional rules keep their penalty factor. A deterministic proximal-gradient solver (FISTA) solves it.
 
 ```python
-erf = ExpertRuleFit(confirmatory_mode="constrained")      # or constrained_penalty="ridge"
+erf = ExpertRuleFit(confirmatory_mode="constrained")  # or constrained_penalty="ridge"
 erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
-erf.confirmatory_status_[0]["bound_active"]   # True: held at 0 because, given the other
-                                              # terms, the data push against the expert's sign
-erf.constrained_info_                         # C, l1_ratio, iterations, KKT residual, bounds
+erf.confirmatory_status_[0]["bound_active"]  # True: held at 0 because, given the other
+# terms, the data push against the expert's sign
+erf.constrained_info_  # C, l1_ratio, iterations, KKT residual, bounds
 ```
 
 A bound-active rule is reported, not hidden: its coefficient is 0, so it is not *included* in the sense of the paper's Definition 1, and a warning names it. `constrained_penalty="ridge"` makes the problem strictly convex (unique solution) even when generated rules duplicate a confirmatory rule. Default since 0.8.0; `confirmatory_mode="refit"` keeps the earlier behaviour. `strict=True` turns the bound-active warning into a `ConfirmatoryBoundError`.
@@ -168,9 +170,13 @@ rules, ebm = discover_interaction_rules(X_train, y_train, feature_names, top_k=3
 # Data-discovered rules enter as optional rules (reduced penalty);
 # they are not confirmatory unless an expert reviews them.
 erf = ExpertRuleFit(max_rules=50)
-erf.fit(X_train, y_train, feature_names=fn,
-        confirmatory_rules=confirmatory,   # expert-imposed rules only
-        optional_rules=rules)              # EBM-discovered rules
+erf.fit(
+    X_train,
+    y_train,
+    feature_names=fn,
+    confirmatory_rules=confirmatory,  # expert-imposed rules only
+    optional_rules=rules,
+)  # EBM-discovered rules
 ```
 
 **Pipeline:** EBM (GA2M) identifies which feature pairs interact → quantile scan finds discriminative thresholds → ExpertRuleFit treats them as optional candidates.
@@ -228,7 +234,7 @@ y_pred = erf.predict(X_test)  # array of {0, 1}
 
 ```python
 proba = erf.predict_proba(X_test)  # shape (n_samples, 2)
-p_default = proba[:, 1]            # P(y=1) — e.g., probability of default
+p_default = proba[:, 1]  # P(y=1) — e.g., probability of default
 ```
 
 Probabilities are logistic-regression outputs; their calibration has not yet been evaluated on the benchmark datasets. If calibrated scores matter (e.g. PD estimates), set `calibration="sigmoid"` or `"isotonic"` (in 0.8.0 this requires `confirmatory_mode="refit"`) and check reliability on held-out data. Each row sums to 1.0. Use `proba[:, 1]` for AUC, ranking, and threshold tuning.

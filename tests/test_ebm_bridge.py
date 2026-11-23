@@ -1,6 +1,7 @@
 """Unit tests for ebm_bridge module."""
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -18,21 +19,31 @@ def interaction_data():
     """Generate data with a known interaction effect."""
     rng = np.random.RandomState(42)
     n = 500
-    X = np.column_stack([
-        rng.uniform(0, 5, n),       # feature_0
-        rng.exponential(30, n),      # feature_1
-        rng.beta(2, 5, n),          # feature_2
-        rng.beta(1.5, 8, n),        # feature_3
-        rng.uniform(0, 20, n),      # feature_4
-    ])
-    feature_names = ["country_risk", "payment_delay", "cash_ratio",
-                     "night_tx_ratio", "tenure"]
+    X = np.column_stack(
+        [
+            rng.uniform(0, 5, n),  # feature_0
+            rng.exponential(30, n),  # feature_1
+            rng.beta(2, 5, n),  # feature_2
+            rng.beta(1.5, 8, n),  # feature_3
+            rng.uniform(0, 20, n),  # feature_4
+        ]
+    )
+    feature_names = [
+        "country_risk",
+        "payment_delay",
+        "cash_ratio",
+        "night_tx_ratio",
+        "tenure",
+    ]
 
     # Ground truth includes an interaction between feature_2 and feature_3
-    logit = (0.8 * (X[:, 2] > 0.4)
-             + 0.5 * (X[:, 3] > 0.15)
-             + 0.3 * (X[:, 2] > 0.3) * (X[:, 3] > 0.1)
-             + rng.normal(0, 0.3, n) - 0.8)
+    logit = (
+        0.8 * (X[:, 2] > 0.4)
+        + 0.5 * (X[:, 3] > 0.15)
+        + 0.3 * (X[:, 2] > 0.3) * (X[:, 3] > 0.1)
+        + rng.normal(0, 0.3, n)
+        - 0.8
+    )
     y = (logit > 0).astype(int)
     return X, y, feature_names
 
@@ -70,7 +81,9 @@ def test_discover_interaction_rules(interaction_data):
     X, y, fn = interaction_data
 
     rules, ebm = discover_interaction_rules(
-        X, y, fn,
+        X,
+        y,
+        fn,
         top_k=2,
         max_interactions=5,
         random_state=42,
@@ -99,6 +112,7 @@ def test_discover_interaction_rules(interaction_data):
 def test_default_rule_type_is_optional():
     """discover_interaction_rules must not promote data rules by default."""
     import inspect
+
     sig = inspect.signature(discover_interaction_rules)
     assert sig.parameters["rule_type"].default == "optional"
 

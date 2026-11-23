@@ -20,11 +20,13 @@ Output: ./output/ with figures, CSVs, markdown report, log
 # Multi-threaded linear algebra introduces floating-point non-determinism
 # (parallel reduction ordering varies), which defeats reproducibility testing.
 import os
+
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import warnings
+
 warnings.filterwarnings("ignore")
 import sys
 import time
@@ -41,6 +43,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -58,7 +61,7 @@ DATA_DIR = os.path.join(OUTPUT_DIR, "data")
 N_JOBS = -1  # all cores
 
 # Colors
-COLOR_RF = "#2196F3"   # blue — RuleFit
+COLOR_RF = "#2196F3"  # blue — RuleFit
 COLOR_ERF = "#4CAF50"  # green — ExpertRuleFit
 
 # ============================================================
@@ -82,7 +85,6 @@ log = logging.getLogger(__name__)
 # ============================================================
 # REUSE PACKAGE IMPLEMENTATIONS (avoid code duplication)
 # ============================================================
-from expertrulefit.expert_rulefit import eval_rule_on_data, build_rule_feature_matrix
 from expertrulefit import ExpertRuleFit
 
 
@@ -137,6 +139,7 @@ def load_german_credit():
     log.info("Loading German Credit dataset...")
     try:
         from ucimlrepo import fetch_ucirepo
+
         ds = fetch_ucirepo(id=144)
         X = ds.data.features.copy()
         y = ds.data.targets.iloc[:, 0].values
@@ -160,7 +163,9 @@ def load_german_credit():
         y = (y == y.max()).astype(int)
 
     X = pd.DataFrame(X).reset_index(drop=True)
-    log.info(f"German Credit: {X.shape[0]} samples, {X.shape[1]} raw features, {y.mean():.1%} positive rate")
+    log.info(
+        f"German Credit: {X.shape[0]} samples, {X.shape[1]} raw features, {y.mean():.1%} positive rate"
+    )
     return X, y, [f"f{i}" for i in range(X.shape[1])]
 
 
@@ -169,6 +174,7 @@ def load_taiwan_credit():
     log.info("Loading Taiwan Credit Card Default dataset...")
     try:
         from ucimlrepo import fetch_ucirepo
+
         ds = fetch_ucirepo(id=350)
         X = ds.data.features.copy()
         y = ds.data.targets.iloc[:, 0].values
@@ -193,7 +199,9 @@ def load_taiwan_credit():
         idx = rng.choice(X.shape[0], size=5000, replace=False)
         X, y = X.iloc[idx].reset_index(drop=True), y[idx]
 
-    log.info(f"Taiwan Credit: {X.shape[0]} samples (subsample of 30,000), {X.shape[1]} raw features, {y.mean():.1%} positive rate")
+    log.info(
+        f"Taiwan Credit: {X.shape[0]} samples (subsample of 30,000), {X.shape[1]} raw features, {y.mean():.1%} positive rate"
+    )
     return X, y, [f"f{i}" for i in range(X.shape[1])]
 
 
@@ -220,7 +228,9 @@ def load_hmeq():
     X, y = X[valid], y[valid].astype(int)
 
     X = X.reset_index(drop=True)
-    log.info(f"HMEQ: {X.shape[0]} samples, {X.shape[1]} raw features, {y.mean():.1%} positive rate")
+    log.info(
+        f"HMEQ: {X.shape[0]} samples, {X.shape[1]} raw features, {y.mean():.1%} positive rate"
+    )
     return X, y, [f"f{i}" for i in range(X.shape[1])]
 
 
@@ -243,7 +253,9 @@ def preprocess(X_train, X_test):
         imp_cat = SimpleImputer(strategy="most_frequent").fit(X_train[cat_cols])
         tr_cat = imp_cat.transform(X_train[cat_cols])
         te_cat = imp_cat.transform(X_test[cat_cols])
-        enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1).fit(tr_cat)
+        enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1).fit(
+            tr_cat
+        )
         X_train[cat_cols] = enc.transform(tr_cat)
         X_test[cat_cols] = enc.transform(te_cat)
 
@@ -316,7 +328,9 @@ def jaccard_similarity(set1, set2):
 # ============================================================
 # SINGLE SEED EVALUATION
 # ============================================================
-def evaluate_single_seed(seed, X_train, y_train, X_test, y_test, feature_names, model_type="rulefit"):
+def evaluate_single_seed(
+    seed, X_train, y_train, X_test, y_test, feature_names, model_type="rulefit"
+):
     """Evaluate one model on one seed. Returns dict of metrics."""
     try:
         if model_type == "rulefit":
@@ -382,9 +396,9 @@ def evaluate_single_seed(seed, X_train, y_train, X_test, y_test, feature_names, 
 # ============================================================
 def run_dataset_benchmark(dataset_name, X, y, feature_names):
     """Run full 100-seed benchmark on one dataset."""
-    log.info(f"\n{'='*60}")
+    log.info(f"\n{'=' * 60}")
     log.info(f"Benchmarking: {dataset_name}")
-    log.info(f"{'='*60}")
+    log.info(f"{'=' * 60}")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
@@ -400,7 +414,9 @@ def run_dataset_benchmark(dataset_name, X, y, feature_names):
         delayed(evaluate_single_seed)(
             seed, X_train, y_train, X_test, y_test, feature_names, "rulefit"
         )
-        for seed in tqdm(range(N_SEEDS), desc=f"  RuleFit [{dataset_name}]", leave=False)
+        for seed in tqdm(
+            range(N_SEEDS), desc=f"  RuleFit [{dataset_name}]", leave=False
+        )
     )
     results.extend(rf_results)
 
@@ -409,8 +425,12 @@ def run_dataset_benchmark(dataset_name, X, y, feature_names):
     # introduce floating-point non-determinism from thread scheduling)
     log.info(f"  Running ExpertRuleFit ({N_SEEDS} seeds)...")
     erf_results = []
-    for seed in tqdm(range(N_SEEDS), desc=f"  ExpertRuleFit [{dataset_name}]", leave=False):
-        r = evaluate_single_seed(seed, X_train, y_train, X_test, y_test, feature_names, "expertrulefit")
+    for seed in tqdm(
+        range(N_SEEDS), desc=f"  ExpertRuleFit [{dataset_name}]", leave=False
+    ):
+        r = evaluate_single_seed(
+            seed, X_train, y_train, X_test, y_test, feature_names, "expertrulefit"
+        )
         erf_results.append(r)
     results.extend(erf_results)
 
@@ -419,7 +439,9 @@ def run_dataset_benchmark(dataset_name, X, y, feature_names):
 
     # Save CSV
     df = pd.DataFrame([{k: v for k, v in r.items() if k != "rules"} for r in results])
-    csv_path = os.path.join(DATA_DIR, f"results_{dataset_name.lower().replace(' ', '_')}.csv")
+    csv_path = os.path.join(
+        DATA_DIR, f"results_{dataset_name.lower().replace(' ', '_')}.csv"
+    )
     df.to_csv(csv_path, index=False)
     log.info(f"  Results saved to {csv_path}")
 
@@ -452,6 +474,7 @@ def compute_stability_metrics(results, dataset_name):
         # Stability: rule_stability_score
         hashes = [r["rules_hash"] for r in model_results]
         from collections import Counter
+
         hash_counts = Counter(hashes)
         most_common_count = hash_counts.most_common(1)[0][1] if hash_counts else 0
         metrics[f"{prefix}_stability_score"] = most_common_count
@@ -479,7 +502,9 @@ def compute_stability_metrics(results, dataset_name):
             for rs in rule_sets:
                 if top5:
                     overlap_scores.append(sum(1 for r in top5 if r in rs) / len(top5))
-            metrics[f"{prefix}_top5_overlap"] = np.mean(overlap_scores) if overlap_scores else 0
+            metrics[f"{prefix}_top5_overlap"] = (
+                np.mean(overlap_scores) if overlap_scores else 0
+            )
         else:
             metrics[f"{prefix}_top5_overlap"] = 0
 
@@ -492,12 +517,14 @@ def compute_stability_metrics(results, dataset_name):
 def generate_figures(all_results, all_metrics, dataset_names):
     """Generate all 5 figures + combined PDF."""
     plt.style.use("seaborn-v0_8-whitegrid")
-    plt.rcParams.update({
-        "font.size": 12,
-        "axes.titlesize": 14,
-        "axes.labelsize": 12,
-        "figure.dpi": 300,
-    })
+    plt.rcParams.update(
+        {
+            "font.size": 12,
+            "axes.titlesize": 14,
+            "axes.labelsize": 12,
+            "figure.dpi": 300,
+        }
+    )
 
     figs = []
 
@@ -559,7 +586,14 @@ def plot_stability_heatmap(all_results, dataset_names):
         all_rules = sorted(all_rules)[:20]  # top 20
 
         if not all_rules:
-            ax.text(0.5, 0.5, "No rules extracted", ha="center", va="center", transform=ax.transAxes)
+            ax.text(
+                0.5,
+                0.5,
+                "No rules extracted",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
             ax.set_title(title)
             continue
 
@@ -572,8 +606,11 @@ def plot_stability_heatmap(all_results, dataset_names):
 
         cmap = sns.color_palette(["white", color], as_cmap=True)
         sns.heatmap(
-            matrix, ax=ax, cmap=cmap, cbar=False,
-            xticklabels=[f"R{j+1}" for j in range(len(all_rules))],
+            matrix,
+            ax=ax,
+            cmap=cmap,
+            cbar=False,
+            xticklabels=[f"R{j + 1}" for j in range(len(all_rules))],
             yticklabels=False,
         )
         ax.set_xlabel("Rules")
@@ -594,21 +631,51 @@ def plot_reproducibility_scores(all_metrics, dataset_names):
     rf_scores = [all_metrics[ds]["rf_stability_score"] for ds in dataset_names]
     erf_scores = [all_metrics[ds]["erf_stability_score"] for ds in dataset_names]
 
-    bars1 = ax.bar(x - width/2, rf_scores, width, label="RuleFit Standard",
-                   color=COLOR_RF, edgecolor="white", linewidth=1)
-    bars2 = ax.bar(x + width/2, erf_scores, width, label="ExpertRuleFit",
-                   color=COLOR_ERF, edgecolor="white", linewidth=1)
+    bars1 = ax.bar(
+        x - width / 2,
+        rf_scores,
+        width,
+        label="RuleFit Standard",
+        color=COLOR_RF,
+        edgecolor="white",
+        linewidth=1,
+    )
+    bars2 = ax.bar(
+        x + width / 2,
+        erf_scores,
+        width,
+        label="ExpertRuleFit",
+        color=COLOR_ERF,
+        edgecolor="white",
+        linewidth=1,
+    )
 
     # Annotate
     for bar, score in zip(bars1, rf_scores):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                f"{score}/100", ha="center", va="bottom", fontsize=11, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 1,
+            f"{score}/100",
+            ha="center",
+            va="bottom",
+            fontsize=11,
+            fontweight="bold",
+        )
     for bar, score in zip(bars2, erf_scores):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                f"{score}/100", ha="center", va="bottom", fontsize=11, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 1,
+            f"{score}/100",
+            ha="center",
+            va="bottom",
+            fontsize=11,
+            fontweight="bold",
+        )
 
     ax.set_ylabel("Stability Score (seeds with identical rule set)")
-    ax.set_title("Rule Reproducibility: RuleFit vs ExpertRuleFit", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "Rule Reproducibility: RuleFit vs ExpertRuleFit", fontsize=14, fontweight="bold"
+    )
     ax.set_xticks(x)
     ax.set_xticklabels(dataset_names)
     ax.set_ylim(0, 115)
@@ -621,7 +688,7 @@ def plot_reproducibility_scores(all_metrics, dataset_names):
 
 def plot_auc_violin(all_results, dataset_names):
     """Figure 3: AUC distribution violin plot."""
-    fig, axes = plt.subplots(1, len(dataset_names), figsize=(5*len(dataset_names), 6))
+    fig, axes = plt.subplots(1, len(dataset_names), figsize=(5 * len(dataset_names), 6))
     if len(dataset_names) == 1:
         axes = [axes]
 
@@ -631,27 +698,35 @@ def plot_auc_violin(all_results, dataset_names):
         rf_aucs = [r["auc"] for r in results if r["model"] == "rulefit"]
         erf_aucs = [r["auc"] for r in results if r["model"] == "expertrulefit"]
 
-        data = pd.DataFrame({
-            "AUC": rf_aucs + erf_aucs,
-            "Model": ["RuleFit"] * len(rf_aucs) + ["ExpertRuleFit"] * len(erf_aucs),
-        })
+        data = pd.DataFrame(
+            {
+                "AUC": rf_aucs + erf_aucs,
+                "Model": ["RuleFit"] * len(rf_aucs) + ["ExpertRuleFit"] * len(erf_aucs),
+            }
+        )
 
         sns.violinplot(
-            data=data, x="Model", y="AUC", ax=ax,
+            data=data,
+            x="Model",
+            y="AUC",
+            ax=ax,
             palette={"RuleFit": COLOR_RF, "ExpertRuleFit": COLOR_ERF},
-            inner="box", cut=0,
+            inner="box",
+            cut=0,
         )
         ax.set_title(ds_name, fontsize=13, fontweight="bold")
         ax.set_xlabel("")
 
-    fig.suptitle("AUC-ROC Distribution Across 100 Seeds", fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "AUC-ROC Distribution Across 100 Seeds", fontsize=14, fontweight="bold", y=1.02
+    )
     plt.tight_layout()
     return fig
 
 
 def plot_jaccard_distribution(all_results, dataset_names):
     """Figure 4: Jaccard similarity distribution."""
-    fig, axes = plt.subplots(1, len(dataset_names), figsize=(5*len(dataset_names), 5))
+    fig, axes = plt.subplots(1, len(dataset_names), figsize=(5 * len(dataset_names), 5))
     if len(dataset_names) == 1:
         axes = [axes]
 
@@ -672,7 +747,14 @@ def plot_jaccard_distribution(all_results, dataset_names):
                 jaccards.append(jaccard_similarity(rule_sets[i], rule_sets[j]))
 
             if jaccards:
-                ax.hist(jaccards, bins=20, alpha=0.6, color=color, label=label, edgecolor="white")
+                ax.hist(
+                    jaccards,
+                    bins=20,
+                    alpha=0.6,
+                    color=color,
+                    label=label,
+                    edgecolor="white",
+                )
 
         ax.set_xlabel("Jaccard Similarity")
         ax.set_ylabel("Frequency")
@@ -680,7 +762,9 @@ def plot_jaccard_distribution(all_results, dataset_names):
         ax.legend()
         ax.set_xlim(-0.05, 1.05)
 
-    fig.suptitle("Pairwise Rule Set Jaccard Similarity", fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Pairwise Rule Set Jaccard Similarity", fontsize=14, fontweight="bold", y=1.02
+    )
     plt.tight_layout()
     return fig
 
@@ -693,19 +777,26 @@ def plot_n_rules_boxplot(all_results, dataset_names):
     for ds_name in dataset_names:
         results = all_results[ds_name]
         for r in results:
-            data_rows.append({
-                "Dataset": ds_name,
-                "Model": "RuleFit" if r["model"] == "rulefit" else "ExpertRuleFit",
-                "N Rules": r["n_rules"],
-            })
+            data_rows.append(
+                {
+                    "Dataset": ds_name,
+                    "Model": "RuleFit" if r["model"] == "rulefit" else "ExpertRuleFit",
+                    "N Rules": r["n_rules"],
+                }
+            )
 
     data = pd.DataFrame(data_rows)
     sns.boxplot(
-        data=data, x="Dataset", y="N Rules", hue="Model",
+        data=data,
+        x="Dataset",
+        y="N Rules",
+        hue="Model",
         palette={"RuleFit": COLOR_RF, "ExpertRuleFit": COLOR_ERF},
         ax=ax,
     )
-    ax.set_title("Number of Rules Selected Across 100 Seeds", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "Number of Rules Selected Across 100 Seeds", fontsize=14, fontweight="bold"
+    )
     ax.set_ylabel("Number of Rules")
     ax.legend(fontsize=12)
 
@@ -724,63 +815,115 @@ def generate_report(all_metrics, dataset_names):
     lines.append("# ExpertRuleFit Validation Benchmark Report\n")
     lines.append(f"**Date**: {now}")
     lines.append("**Author**: Djebar Hammouche")
-    lines.append("**Objective**: Demonstrate reproducibility of ExpertRuleFit vs RuleFit standard\n")
+    lines.append(
+        "**Objective**: Demonstrate reproducibility of ExpertRuleFit vs RuleFit standard\n"
+    )
 
     # Executive Summary
     lines.append("## 1. Executive Summary\n")
-    lines.append("| Dataset | Model | Stability Score | AUC (mean +/- std) | Jaccard Mean |")
+    lines.append(
+        "| Dataset | Model | Stability Score | AUC (mean +/- std) | Jaccard Mean |"
+    )
     lines.append("|---------|-------|:-:|:-:|:-:|")
     for ds in dataset_names:
         m = all_metrics[ds]
-        lines.append(f"| {ds} | RuleFit | **{m['rf_stability_score']}/100** | {m['rf_auc_mean']:.4f} +/- {m['rf_auc_std']:.4f} | {m['rf_jaccard_mean']:.3f} |")
-        lines.append(f"| | ExpertRuleFit | **{m['erf_stability_score']}/100** | {m['erf_auc_mean']:.4f} +/- {m['erf_auc_std']:.4f} | {m['erf_jaccard_mean']:.3f} |")
+        lines.append(
+            f"| {ds} | RuleFit | **{m['rf_stability_score']}/100** | {m['rf_auc_mean']:.4f} +/- {m['rf_auc_std']:.4f} | {m['rf_jaccard_mean']:.3f} |"
+        )
+        lines.append(
+            f"| | ExpertRuleFit | **{m['erf_stability_score']}/100** | {m['erf_auc_mean']:.4f} +/- {m['erf_auc_std']:.4f} | {m['erf_jaccard_mean']:.3f} |"
+        )
 
     lines.append("")
     # Summary conclusion
     rf_avg = np.mean([all_metrics[ds]["rf_stability_score"] for ds in dataset_names])
     erf_avg = np.mean([all_metrics[ds]["erf_stability_score"] for ds in dataset_names])
-    lines.append(f"> **Conclusion**: ExpertRuleFit achieves an average stability score of **{erf_avg:.0f}/100** ")
-    lines.append(f"> across all datasets, compared to **{rf_avg:.0f}/100** for standard RuleFit. ")
-    lines.append(f"> The Elastic Net + bootstrap stabilization approach guarantees reproducible rule selection ")
-    lines.append(f"> required for production deployment in regulated banking environments.\n")
+    lines.append(
+        f"> **Conclusion**: ExpertRuleFit achieves an average stability score of **{erf_avg:.0f}/100** "
+    )
+    lines.append(
+        f"> across all datasets, compared to **{rf_avg:.0f}/100** for standard RuleFit. "
+    )
+    lines.append(
+        "> The Elastic Net + bootstrap stabilization approach guarantees reproducible rule selection "
+    )
+    lines.append(
+        "> required for production deployment in regulated banking environments.\n"
+    )
 
     # Methodology
     lines.append("## 2. Methodology\n")
     lines.append("### Protocol")
     lines.append("- **100 random seeds** per model per dataset")
-    lines.append("- For each seed: fit model, extract selected rules (coef != 0), compute AUC/accuracy/F1")
-    lines.append("- Compare rule set stability across seeds using hash comparison and Jaccard similarity\n")
+    lines.append(
+        "- For each seed: fit model, extract selected rules (coef != 0), compute AUC/accuracy/F1"
+    )
+    lines.append(
+        "- Compare rule set stability across seeds using hash comparison and Jaccard similarity\n"
+    )
     lines.append("### Models")
-    lines.append("- **RuleFit Standard**: `imodels.RuleFitClassifier` with default Lasso (LassoCV)")
-    lines.append("- **ExpertRuleFit**: Custom extension with Elastic Net + bootstrap stabilization")
+    lines.append(
+        "- **RuleFit Standard**: `imodels.RuleFitClassifier` with default Lasso (LassoCV)"
+    )
+    lines.append(
+        "- **ExpertRuleFit**: Custom extension with Elastic Net + bootstrap stabilization"
+    )
     lines.append("  - ElasticNetCV with `l1_ratio` optimized by 5-fold CV")
     lines.append("  - 10 bootstrap runs per fit, tight tolerance (`tol=1e-6`)")
     lines.append("  - Rule retained only if selected in >= 80% of bootstrap runs\n")
     lines.append("### Metrics")
-    lines.append("- **Stability Score**: # seeds producing identical rule set as majority / 100")
-    lines.append("- **Jaccard Similarity**: mean pairwise Jaccard between all seed rule sets")
-    lines.append("- **Top-5 Overlap**: % of top-5 most frequent rules that are stable across seeds")
+    lines.append(
+        "- **Stability Score**: # seeds producing identical rule set as majority / 100"
+    )
+    lines.append(
+        "- **Jaccard Similarity**: mean pairwise Jaccard between all seed rule sets"
+    )
+    lines.append(
+        "- **Top-5 Overlap**: % of top-5 most frequent rules that are stable across seeds"
+    )
     lines.append("- **AUC-ROC**, **Accuracy**, **F1**: mean +/- std across 100 seeds\n")
     lines.append("### Regulatory Context")
-    lines.append("- **EU AI Act Art. 9**: Risk management requires reproducible model behavior")
-    lines.append("- **EU AI Act Art. 12**: Logging — same model must produce same results on re-execution")
-    lines.append("- **BCBS 239 Principle 3**: Accuracy — results must be verifiable and reproducible")
-    lines.append("- **CSSF Luxembourg**: Regulator can request model re-execution with identical output\n")
+    lines.append(
+        "- **EU AI Act Art. 9**: Risk management requires reproducible model behavior"
+    )
+    lines.append(
+        "- **EU AI Act Art. 12**: Logging — same model must produce same results on re-execution"
+    )
+    lines.append(
+        "- **BCBS 239 Principle 3**: Accuracy — results must be verifiable and reproducible"
+    )
+    lines.append(
+        "- **CSSF Luxembourg**: Regulator can request model re-execution with identical output\n"
+    )
 
     # Results per dataset
     lines.append("## 3. Results by Dataset\n")
     for ds in dataset_names:
         m = all_metrics[ds]
-        lines.append(f"### 3.{dataset_names.index(ds)+1} {ds}\n")
+        lines.append(f"### 3.{dataset_names.index(ds) + 1} {ds}\n")
         lines.append("| Metric | RuleFit Standard | ExpertRuleFit |")
         lines.append("|--------|:-:|:-:|")
-        lines.append(f"| Stability Score | {m['rf_stability_score']}/100 | **{m['erf_stability_score']}/100** |")
-        lines.append(f"| AUC-ROC | {m['rf_auc_mean']:.4f} +/- {m['rf_auc_std']:.4f} | {m['erf_auc_mean']:.4f} +/- {m['erf_auc_std']:.4f} |")
-        lines.append(f"| Accuracy | {m['rf_acc_mean']:.4f} +/- {m['rf_acc_std']:.4f} | {m['erf_acc_mean']:.4f} +/- {m['erf_acc_std']:.4f} |")
-        lines.append(f"| F1 Score | {m['rf_f1_mean']:.4f} +/- {m['rf_f1_std']:.4f} | {m['erf_f1_mean']:.4f} +/- {m['erf_f1_std']:.4f} |")
-        lines.append(f"| N Rules (mean +/- std) | {m['rf_n_rules_mean']:.1f} +/- {m['rf_n_rules_std']:.1f} | {m['erf_n_rules_mean']:.1f} +/- {m['erf_n_rules_std']:.1f} |")
-        lines.append(f"| Jaccard Similarity | {m['rf_jaccard_mean']:.3f} +/- {m['rf_jaccard_std']:.3f} | {m['erf_jaccard_mean']:.3f} +/- {m['erf_jaccard_std']:.3f} |")
-        lines.append(f"| Top-5 Rule Overlap | {m['rf_top5_overlap']:.1%} | {m['erf_top5_overlap']:.1%} |")
+        lines.append(
+            f"| Stability Score | {m['rf_stability_score']}/100 | **{m['erf_stability_score']}/100** |"
+        )
+        lines.append(
+            f"| AUC-ROC | {m['rf_auc_mean']:.4f} +/- {m['rf_auc_std']:.4f} | {m['erf_auc_mean']:.4f} +/- {m['erf_auc_std']:.4f} |"
+        )
+        lines.append(
+            f"| Accuracy | {m['rf_acc_mean']:.4f} +/- {m['rf_acc_std']:.4f} | {m['erf_acc_mean']:.4f} +/- {m['erf_acc_std']:.4f} |"
+        )
+        lines.append(
+            f"| F1 Score | {m['rf_f1_mean']:.4f} +/- {m['rf_f1_std']:.4f} | {m['erf_f1_mean']:.4f} +/- {m['erf_f1_std']:.4f} |"
+        )
+        lines.append(
+            f"| N Rules (mean +/- std) | {m['rf_n_rules_mean']:.1f} +/- {m['rf_n_rules_std']:.1f} | {m['erf_n_rules_mean']:.1f} +/- {m['erf_n_rules_std']:.1f} |"
+        )
+        lines.append(
+            f"| Jaccard Similarity | {m['rf_jaccard_mean']:.3f} +/- {m['rf_jaccard_std']:.3f} | {m['erf_jaccard_mean']:.3f} +/- {m['erf_jaccard_std']:.3f} |"
+        )
+        lines.append(
+            f"| Top-5 Rule Overlap | {m['rf_top5_overlap']:.1%} | {m['erf_top5_overlap']:.1%} |"
+        )
         lines.append("")
 
     # Figures reference
@@ -794,42 +937,78 @@ def generate_report(all_metrics, dataset_names):
     # Comparative analysis
     lines.append("## 4. Comparative Analysis\n")
     lines.append("### Consolidated Results\n")
-    lines.append("| Dataset | RF Stability | ERF Stability | RF AUC | ERF AUC | AUC Delta |")
+    lines.append(
+        "| Dataset | RF Stability | ERF Stability | RF AUC | ERF AUC | AUC Delta |"
+    )
     lines.append("|---------|:-:|:-:|:-:|:-:|:-:|")
     for ds in dataset_names:
         m = all_metrics[ds]
         delta = m["erf_auc_mean"] - m["rf_auc_mean"]
-        lines.append(f"| {ds} | {m['rf_stability_score']}/100 | **{m['erf_stability_score']}/100** | {m['rf_auc_mean']:.4f} | {m['erf_auc_mean']:.4f} | {delta:+.4f} |")
+        lines.append(
+            f"| {ds} | {m['rf_stability_score']}/100 | **{m['erf_stability_score']}/100** | {m['rf_auc_mean']:.4f} | {m['erf_auc_mean']:.4f} | {delta:+.4f} |"
+        )
 
     lines.append("")
     lines.append("### Performance vs Stability Trade-off\n")
-    lines.append("ExpertRuleFit may show a small AUC reduction compared to standard RuleFit. ")
-    lines.append("This is the **documented cost of stability**: the Elastic Net's L2 component ")
-    lines.append("and the bootstrap frequency filter sacrifice marginal predictive power ")
+    lines.append(
+        "ExpertRuleFit may show a small AUC reduction compared to standard RuleFit. "
+    )
+    lines.append(
+        "This is the **documented cost of stability**: the Elastic Net's L2 component "
+    )
+    lines.append(
+        "and the bootstrap frequency filter sacrifice marginal predictive power "
+    )
     lines.append("in exchange for **guaranteed reproducibility**.\n")
-    lines.append("In production banking, this trade-off is **non-negotiable**: a model that ")
-    lines.append("changes its rules at every execution is **non-deployable** regardless of its AUC.\n")
+    lines.append(
+        "In production banking, this trade-off is **non-negotiable**: a model that "
+    )
+    lines.append(
+        "changes its rules at every execution is **non-deployable** regardless of its AUC.\n"
+    )
 
     # Regulatory implications
     lines.append("## 5. Regulatory Implications\n")
     lines.append("| Requirement | Standard | How ExpertRuleFit Complies |")
     lines.append("|-------------|----------|---------------------------|")
-    lines.append("| EU AI Act Art. 9 | Risk management system | Reproducible output guarantees consistent risk assessment |")
-    lines.append("| EU AI Act Art. 12 | Automatic logging | Same model produces identical results at each audit |")
-    lines.append("| EU AI Act Art. 13 | Transparency | Stable rules can be documented and explained consistently |")
-    lines.append("| BCBS 239 Principle 3 | Accuracy & integrity | Verifiable results across re-executions |")
-    lines.append("| CSSF Circular 12/552 | Model governance | Regulator can re-execute and obtain identical output |\n")
+    lines.append(
+        "| EU AI Act Art. 9 | Risk management system | Reproducible output guarantees consistent risk assessment |"
+    )
+    lines.append(
+        "| EU AI Act Art. 12 | Automatic logging | Same model produces identical results at each audit |"
+    )
+    lines.append(
+        "| EU AI Act Art. 13 | Transparency | Stable rules can be documented and explained consistently |"
+    )
+    lines.append(
+        "| BCBS 239 Principle 3 | Accuracy & integrity | Verifiable results across re-executions |"
+    )
+    lines.append(
+        "| CSSF Circular 12/552 | Model governance | Regulator can re-execute and obtain identical output |\n"
+    )
 
     # Conclusion
     lines.append("## 6. Conclusion\n")
-    lines.append(f"ExpertRuleFit achieves **{erf_avg:.0f}/100 average stability** across three credit scoring ")
-    lines.append(f"benchmarks, compared to **{rf_avg:.0f}/100** for standard RuleFit. The bootstrap-stabilized ")
-    lines.append("Elastic Net approach guarantees that the same rules are selected regardless of random seed, ")
-    lines.append("making it the only RuleFit variant suitable for deployment in regulated banking environments.\n")
+    lines.append(
+        f"ExpertRuleFit achieves **{erf_avg:.0f}/100 average stability** across three credit scoring "
+    )
+    lines.append(
+        f"benchmarks, compared to **{rf_avg:.0f}/100** for standard RuleFit. The bootstrap-stabilized "
+    )
+    lines.append(
+        "Elastic Net approach guarantees that the same rules are selected regardless of random seed, "
+    )
+    lines.append(
+        "making it the only RuleFit variant suitable for deployment in regulated banking environments.\n"
+    )
     lines.append("### Key Properties")
     lines.append("- **Reproducible**: identical rules across 100 random seeds")
-    lines.append("- **Interpretable**: rule-based model, transparent by design (EU AI Act Art. 13)")
-    lines.append("- **Auditable**: stable output enables consistent regulatory reporting")
+    lines.append(
+        "- **Interpretable**: rule-based model, transparent by design (EU AI Act Art. 13)"
+    )
+    lines.append(
+        "- **Auditable**: stable output enables consistent regulatory reporting"
+    )
     lines.append("- **Production-ready**: no seed sensitivity in deployment\n")
     lines.append("---\n")
     lines.append(f"*Report generated on {now} by `expertrulefit_validation.py`*")
@@ -890,7 +1069,7 @@ def main():
     generate_report(all_metrics, dataset_names)
 
     elapsed = time.time() - start
-    log.info(f"\nBenchmark complete in {elapsed/60:.1f} minutes")
+    log.info(f"\nBenchmark complete in {elapsed / 60:.1f} minutes")
     log.info(f"All outputs in: {OUTPUT_DIR}")
 
 

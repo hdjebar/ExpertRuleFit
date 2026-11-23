@@ -79,9 +79,7 @@ class RuleSpec:
         for i, c in enumerate(self.clauses):
             for key in ("feature", "op", "threshold"):
                 if key not in c:
-                    raise ValueError(
-                        f"Clause {i} missing required key '{key}': {c}"
-                    )
+                    raise ValueError(f"Clause {i} missing required key '{key}': {c}")
             if c["op"] not in _VALID_OPS:
                 raise ValueError(
                     f"Clause {i} has invalid op '{c['op']}', "
@@ -137,7 +135,8 @@ class RuleSpec:
         return evaluate
 
     def to_rule_dict(
-        self, feature_names: Optional[list[str]] = None,
+        self,
+        feature_names: Optional[list[str]] = None,
         category: str = "confirmatory",
     ) -> dict:
         """Convert to a rule dict ready for ExpertRuleFit.fit().
@@ -232,8 +231,7 @@ def _check_expected_sign(value, rule_name):
         return None
     if isinstance(value, bool) or value not in (1, -1):
         raise ValueError(
-            f"Rule '{rule_name}': expected_sign must be +1, -1 or None, "
-            f"got {value!r}"
+            f"Rule '{rule_name}': expected_sign must be +1, -1 or None, got {value!r}"
         )
     return int(value)
 

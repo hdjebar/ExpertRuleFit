@@ -18,15 +18,21 @@ def data():
     return X, y, ["a", "b", "c"]
 
 
-CONF = [{"name": "b>2.5", "evaluate": lambda X, fn: (X[:, 1] > 2.5).astype(float),
-         "expected_sign": 1}]
+CONF = [
+    {
+        "name": "b>2.5",
+        "evaluate": lambda X, fn: (X[:, 1] > 2.5).astype(float),
+        "expected_sign": 1,
+    }
+]
 
 
 @pytest.fixture(scope="module")
 def canonical(data):
     X, y, fn = data
     return ExpertRuleFit(row_order="canonical", **FAST).fit(
-        X, y, feature_names=fn, confirmatory_rules=CONF)
+        X, y, feature_names=fn, confirmatory_rules=CONF
+    )
 
 
 @pytest.mark.parametrize("perm_seed", [0, 1])
@@ -34,7 +40,8 @@ def test_canonical_row_order_is_permutation_invariant(data, canonical, perm_seed
     X, y, fn = data
     perm = np.random.RandomState(perm_seed).permutation(len(y))
     m = ExpertRuleFit(row_order="canonical", **FAST).fit(
-        X[perm], y[perm], feature_names=fn, confirmatory_rules=CONF)
+        X[perm], y[perm], feature_names=fn, confirmatory_rules=CONF
+    )
     assert m.get_selected_rules() == canonical.get_selected_rules()
     # bitwise: same rules, same coefficients, same predictions on the same X
     assert m.fingerprint(X) == canonical.fingerprint(X)
@@ -46,8 +53,10 @@ def test_fingerprint_contents_and_bundle(data, canonical):
     assert set(fp) == {"rules_sha256", "coefficients_sha256"}
     fpx = canonical.fingerprint(X)
     assert fpx["n_predictions"] == len(X)
-    assert all(len(fpx[k]) == 64 for k in ("rules_sha256", "coefficients_sha256",
-                                           "predictions_sha256"))
+    assert all(
+        len(fpx[k]) == 64
+        for k in ("rules_sha256", "coefficients_sha256", "predictions_sha256")
+    )
     bundle = canonical.audit_bundle(X_reference=X)
     assert bundle["fingerprint"] == fpx
     assert bundle["row_order"] == "canonical"

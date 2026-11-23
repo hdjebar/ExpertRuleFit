@@ -1,6 +1,7 @@
 """Tests for input validation and eval_rule_on_data edge cases."""
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 import numpy as np

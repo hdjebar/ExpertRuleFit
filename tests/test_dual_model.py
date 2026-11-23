@@ -1,6 +1,7 @@
 """Unit tests for DualModel (EBM + ExpertRuleFit stacking)."""
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -14,17 +15,29 @@ def credit_data():
     """Generate synthetic credit scoring data."""
     rng = np.random.RandomState(42)
     n = 400
-    X = np.column_stack([
-        rng.uniform(0, 5, n),
-        rng.exponential(30, n),
-        rng.beta(2, 5, n),
-        rng.beta(1.5, 8, n),
-        rng.uniform(0, 20, n),
-    ])
-    feature_names = ["country_risk", "payment_delay", "cash_ratio",
-                     "night_tx_ratio", "tenure"]
-    logit = (0.8 * (X[:, 2] > 0.4) + 0.5 * (X[:, 3] > 0.15)
-             + 0.1 * (X[:, 0] > 2.5) + rng.normal(0, 0.3, n) - 0.8)
+    X = np.column_stack(
+        [
+            rng.uniform(0, 5, n),
+            rng.exponential(30, n),
+            rng.beta(2, 5, n),
+            rng.beta(1.5, 8, n),
+            rng.uniform(0, 20, n),
+        ]
+    )
+    feature_names = [
+        "country_risk",
+        "payment_delay",
+        "cash_ratio",
+        "night_tx_ratio",
+        "tenure",
+    ]
+    logit = (
+        0.8 * (X[:, 2] > 0.4)
+        + 0.5 * (X[:, 3] > 0.15)
+        + 0.1 * (X[:, 0] > 2.5)
+        + rng.normal(0, 0.3, n)
+        - 0.8
+    )
     y = (logit > 0).astype(int)
     return X, y, feature_names
 
@@ -72,7 +85,9 @@ def test_dual_model_with_confirmatory(credit_data):
     confirmatory = [
         {
             "name": "High cash ratio",
-            "evaluate": lambda X, fn: (X[:, fn.index("cash_ratio")] > 0.4).astype(float),
+            "evaluate": lambda X, fn: (X[:, fn.index("cash_ratio")] > 0.4).astype(
+                float
+            ),
         },
     ]
 

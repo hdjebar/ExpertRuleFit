@@ -36,8 +36,13 @@ Metrics over all pairs of perturbed fits
 
 import os
 
-for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
-           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+for _v in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
     os.environ.setdefault(_v, "1")
 
 import argparse
@@ -65,7 +70,9 @@ def _data(dataset, data_dir, k):
     from perturbation import Preprocessor, load_dataset
 
     df, y = load_dataset(dataset, data_dir)
-    i_tr, i_te = train_test_split(np.arange(len(y)), test_size=0.2, random_state=42, stratify=y)
+    i_tr, i_te = train_test_split(
+        np.arange(len(y)), test_size=0.2, random_state=42, stratify=y
+    )
     if k >= 0:
         rng = np.random.RandomState(BASE_SEED + k)
         keep = []
@@ -74,13 +81,19 @@ def _data(dataset, data_dir, k):
             keep.append(rng.choice(idx, int(round(0.9 * len(idx))), replace=False))
         i_tr = np.sort(np.concatenate(keep))
     pre = Preprocessor(scale=True).fit(df.iloc[i_tr])
-    return pre.transform(df.iloc[i_tr]), pre.transform(df.iloc[i_te]), y[i_tr], y[i_te], pre.feature_names
+    return (
+        pre.transform(df.iloc[i_tr]),
+        pre.transform(df.iloc[i_te]),
+        y[i_tr],
+        y[i_te],
+        pre.feature_names,
+    )
 
 
 def run(task):
     from sklearn.metrics import roc_auc_score
 
-    from expertrulefit.expert_rulefit import build_rule_feature_matrix, eval_rule_on_data
+    from expertrulefit.expert_rulefit import eval_rule_on_data
 
     warnings.filterwarnings("ignore")
     arm, k = task["arm"], task["k"]
@@ -89,18 +102,31 @@ def run(task):
     if arm == "rulefit_fixed_seed":
         from imodels import RuleFitClassifier
 
-        m = RuleFitClassifier(n_estimators=250, tree_size=4, max_rules=50,
-                              random_state=42, include_linear=True)
+        m = RuleFitClassifier(
+            n_estimators=250,
+            tree_size=4,
+            max_rules=50,
+            random_state=42,
+            include_linear=True,
+        )
         m.fit(X_tr, y_tr, feature_names=names)
         p = m.predict_proba(X_te)[:, 1]
-        lin = [f"linear:{f}" for f, c in zip(names, m.coef[:len(names)]) if abs(c) > 1e-10]
+        lin = [
+            f"linear:{f}" for f, c in zip(names, m.coef[: len(names)]) if abs(c) > 1e-10
+        ]
         # imodels keeps only rules with non-zero coefficient (its own L1 path)
-        rules = [(str(rn), rw.rule) for rn, rw in zip(m.rules_, m.rules_without_feature_names_)]
+        rules = [
+            (str(rn), rw.rule)
+            for rn, rw in zip(m.rules_, m.rules_without_feature_names_)
+        ]
     else:
         from expertrulefit import ExpertRuleFit
 
-        kw = {"erf_default": {}, "erf_no_filter": {"selection": "none"},
-              "erf_trees": {"candidates": "trees"}}[arm]
+        kw = {
+            "erf_default": {},
+            "erf_no_filter": {"selection": "none"},
+            "erf_trees": {"candidates": "trees"},
+        }[arm]
         m = ExpertRuleFit(**kw).fit(X_tr, y_tr, feature_names=names)
         p = m.predict_proba(X_te)[:, 1]
         stable = np.where(m.stable_mask_)[0]
@@ -119,10 +145,17 @@ def run(task):
     fit_s = time.perf_counter() - t0
     acts = [eval_rule_on_data(rw, X_te).astype(bool) for _, rw in rules]
     return {
-        "dataset": task["dataset"], "arm": arm, "k": k, "n_train": int(len(y_tr)),
-        "auc": float(roc_auc_score(y_te, p)), "proba": [round(float(v), 10) for v in p],
-        "terms": sorted(lin + [n for n, _ in rules]), "n_rules": len(rules), "n_linear": len(lin),
-        "activations": [np.packbits(a).tolist() for a in acts], "n_test": int(len(y_te)),
+        "dataset": task["dataset"],
+        "arm": arm,
+        "k": k,
+        "n_train": int(len(y_tr)),
+        "auc": float(roc_auc_score(y_te, p)),
+        "proba": [round(float(v), 10) for v in p],
+        "terms": sorted(lin + [n for n, _ in rules]),
+        "n_rules": len(rules),
+        "n_linear": len(lin),
+        "activations": [np.packbits(a).tolist() for a in acts],
+        "n_test": int(len(y_te)),
         "fit_seconds": round(fit_s, 1),
     }
 
@@ -148,7 +181,11 @@ def semantic_similarity(A, B):
 
 
 def summarize(out, dataset):
-    fits = [json.loads(l) for l in (out / f"{dataset}.jsonl").read_text().splitlines() if l.strip()]
+    fits = [
+        json.loads(l)
+        for l in (out / f"{dataset}.jsonl").read_text().splitlines()
+        if l.strip()
+    ]
     rows = []
     for arm in ARMS:
         g = sorted((f for f in fits if f["arm"] == arm), key=lambda f: f["k"])
@@ -170,33 +207,49 @@ def summarize(out, dataset):
         P = np.array([f["proba"] for f in pert])
         cls = P >= 0.5
         ambiguity = float(np.mean(cls.min(axis=0) != cls.max(axis=0)))
-        discrepancy = float(max(np.mean(c != (np.array(ref["proba"]) >= 0.5)) for c in cls)) if ref else None
+        discrepancy = (
+            float(max(np.mean(c != (np.array(ref["proba"]) >= 0.5)) for c in cls))
+            if ref
+            else None
+        )
         aucs = [f["auc"] for f in pert]
-        rows.append({
-            "dataset": dataset, "arm": arm, "n_fits": len(pert),
-            "jaccard_mean": float(np.mean(jac)), "jaccard_sd": float(np.std(jac)),
-            "dice_mean": float(np.mean(dice)),
-            "semantic_mean": float(np.mean(sem)), "semantic_sd": float(np.std(sem)),
-            "pred_sd_mean": float(P.std(axis=0).mean()),
-            "ambiguity": ambiguity, "discrepancy": discrepancy,
-            "auc_mean": float(np.mean(aucs)), "auc_sd": float(np.std(aucs, ddof=1)),
-            "auc_full": ref["auc"] if ref else None,
-            "n_rules_mean": float(np.mean([f["n_rules"] for f in pert])),
-            "n_linear_mean": float(np.mean([f["n_linear"] for f in pert])),
-            "fit_seconds_mean": float(np.mean([f["fit_seconds"] for f in pert])),
-        })
+        rows.append(
+            {
+                "dataset": dataset,
+                "arm": arm,
+                "n_fits": len(pert),
+                "jaccard_mean": float(np.mean(jac)),
+                "jaccard_sd": float(np.std(jac)),
+                "dice_mean": float(np.mean(dice)),
+                "semantic_mean": float(np.mean(sem)),
+                "semantic_sd": float(np.std(sem)),
+                "pred_sd_mean": float(P.std(axis=0).mean()),
+                "ambiguity": ambiguity,
+                "discrepancy": discrepancy,
+                "auc_mean": float(np.mean(aucs)),
+                "auc_sd": float(np.std(aucs, ddof=1)),
+                "auc_full": ref["auc"] if ref else None,
+                "n_rules_mean": float(np.mean([f["n_rules"] for f in pert])),
+                "n_linear_mean": float(np.mean([f["n_linear"] for f in pert])),
+                "fit_seconds_mean": float(np.mean([f["fit_seconds"] for f in pert])),
+            }
+        )
     (out / f"{dataset}_summary.json").write_text(json.dumps(rows, indent=1))
-    md = ["| Arm | Fits | Jaccard (sd) | Dice | Semantic (sd) | Pred. SD | Ambiguity | Discrepancy "
-          "| AUC mean (sd) | AUC full | Rules + linear | Fit s |",
-          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    md = [
+        "| Arm | Fits | Jaccard (sd) | Dice | Semantic (sd) | Pred. SD | Ambiguity | Discrepancy "
+        "| AUC mean (sd) | AUC full | Rules + linear | Fit s |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
     for r in rows:
         disc = "–" if r["discrepancy"] is None else "%.3f" % r["discrepancy"]
         full = "–" if r["auc_full"] is None else "%.3f" % r["auc_full"]
-        md.append(f"| {r['arm']} | {r['n_fits']} | {r['jaccard_mean']:.3f} ({r['jaccard_sd']:.3f}) | "
-                  f"{r['dice_mean']:.3f} | {r['semantic_mean']:.3f} ({r['semantic_sd']:.3f}) | "
-                  f"{r['pred_sd_mean']:.4f} | {r['ambiguity']:.3f} | {disc} | "
-                  f"{r['auc_mean']:.3f} ({r['auc_sd']:.3f}) | {full} | "
-                  f"{r['n_rules_mean']:.1f} + {r['n_linear_mean']:.1f} | {r['fit_seconds_mean']:.0f} |")
+        md.append(
+            f"| {r['arm']} | {r['n_fits']} | {r['jaccard_mean']:.3f} ({r['jaccard_sd']:.3f}) | "
+            f"{r['dice_mean']:.3f} | {r['semantic_mean']:.3f} ({r['semantic_sd']:.3f}) | "
+            f"{r['pred_sd_mean']:.4f} | {r['ambiguity']:.3f} | {disc} | "
+            f"{r['auc_mean']:.3f} ({r['auc_sd']:.3f}) | {full} | "
+            f"{r['n_rules_mean']:.1f} + {r['n_linear_mean']:.1f} | {r['fit_seconds_mean']:.0f} |"
+        )
     (out / f"{dataset}.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))
 
@@ -217,9 +270,16 @@ def main():
     if not args.summarize_only:
         done = set()
         if path.exists():
-            done = {(f["arm"], f["k"]) for f in map(json.loads, path.read_text().splitlines())}
-        tasks = [{"dataset": args.dataset, "arm": a, "k": k, "data_dir": args.data_dir}
-                 for k in range(-1, args.n_sub) for a in args.arms if (a, k) not in done]
+            done = {
+                (f["arm"], f["k"])
+                for f in map(json.loads, path.read_text().splitlines())
+            }
+        tasks = [
+            {"dataset": args.dataset, "arm": a, "k": k, "data_dir": args.data_dir}
+            for k in range(-1, args.n_sub)
+            for a in args.arms
+            if (a, k) not in done
+        ]
         print(f"{len(tasks)} fits to run", flush=True)
         t0 = time.perf_counter()
         with ProcessPoolExecutor(args.jobs) as ex:
@@ -227,8 +287,11 @@ def main():
                 r = fut.result()
                 with open(path, "a") as f:
                     f.write(json.dumps(r) + "\n")
-                print(f"  {r['arm']} k={r['k']}: AUC {r['auc']:.3f}, {r['n_rules']}+{r['n_linear']} terms, "
-                      f"{r['fit_seconds']}s [{time.perf_counter() - t0:.0f}s]", flush=True)
+                print(
+                    f"  {r['arm']} k={r['k']}: AUC {r['auc']:.3f}, {r['n_rules']}+{r['n_linear']} terms, "
+                    f"{r['fit_seconds']}s [{time.perf_counter() - t0:.0f}s]",
+                    flush=True,
+                )
     summarize(out, args.dataset)
 
 
