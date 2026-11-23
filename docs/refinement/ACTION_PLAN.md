@@ -1,5 +1,11 @@
 # Action plan — ExpertRuleFit refinement
 
+> **P0 — BLOCKING, do first (from review 4, verified 23/11/2026).** A method with the *same name* and the *same core idea* already exists: **Expert RuleFit (ERF)** by Luisa Ebner (LMU Munich master thesis, with M. Nalenz, A. ten Teije, F. van Harmelen, T. Augustin), R implementation at github.com/LuisaEbner/ERF. It extends RuleFit with *confirmatory* expert rules (exempt from penalisation) and *optional* expert rules (adaptive penalty factor). Our README, paper and Table 1 present this as new. Before anything else:
+> 1. README: add a "Prior work and attribution" section at the top: ExpertRuleFit (Python) builds on Expert RuleFit (Ebner et al.); the confirmatory/optional concept and adaptive penalties are theirs; our additions are listed explicitly (determinism by design and execution envelope, bootstrap frequency filter, standardisation + conditioning fix, sign/absorption diagnostics, audit bundle, EBM-optional discovery).
+> 2. Paper: cite Ebner (thesis, and the 2021 workshop paper if its venue is verified), add a row to Table 1 ("Expert RuleFit (Ebner et al.) — rule ensemble — not measured — not stated — yes, penalty factor 0"), rewrite contribution 1 and the abstract so the confirmatory/optional mechanism is credited, not claimed.
+> 3. Decide on the name. Options: keep "ExpertRuleFit" with explicit credit (acceptable but confusing), or rename (e.g. "DetERF", "AuditRuleFit"). Ask the author; do not rename on your own.
+> 4. Verify the exact bibliographic details of the Ebner work (thesis year, workshop venue — review 4 says KR4HC/AIME 2021, LNCS 12721; unverified).
+
 Ordered by impact on the paper's main weakness (no stability-under-perturbation evidence) and on governance risk. Reviewer references: "R:" points to the line of thought in `review/2026-11-22_paperreview-ai_review.md`.
 
 Work on a branch (`refinement/<item>`), one PR per phase, tests green before merge. Keep the determinism guarantee intact: every new random draw must use a seed derived from `_BASE_SEED`.
@@ -140,3 +146,65 @@ Review 3 (`review/2026-11-23_review-3_paper-v2.md`) repeats the core asks of rev
 
 ### Stop rule for reviews
 Three AI reviews now agree on the same gaps. Further reviews will repeat them until new results exist. Request the next review only after B1 (perturbation), C3 (sign constraints) and the ablation are done.
+
+
+---
+
+## Additions from review 4 — Google Deep Review (23/11/2026, paper v2)
+
+The most technical review so far. Besides P0 (prior work, top of this file):
+
+### D2. Specify Step 10 (fallback refit) exactly — correctness
+How is "refit with C unpenalised" run in scikit-learn, which has no per-feature penalty factor? Global `penalty=None` on all kept columns, or tiny w_c (which brings back the conditioning failure)? State the objective, the support (columns from step 7 or support of step 8 + C), the solver, and the scale on which |β_c| > 1e-10 is checked. Note: under saga, perfectly collinear columns split weight rather than one going to 0, so Definition 1's "collinear → flag false" needs a rank/QR check. **This argues for doing C3 with a coordinate-descent solver that supports per-feature penalty factors (v_c = 0) and box constraints, removing the √w rescaling entirely.**
+
+### D3. Check whether imodels runs its own Lasso in step 1 — possibly major
+Does `imodels.RuleFit` with `max_rules=50` select rules through its own L1 fit before our bootstrap filter? If so, the unstable Lasso selection happens upstream (merely frozen by seed 42) and expert rules are not considered when the 50 rules are chosen. Read the code path; if confirmed, extract candidate rules directly (rule-extraction helper, or SIRUS-style occurrence frequency) and say so in the paper.
+
+### D4. Bootstrap with replacement + inner CV = duplicate-row leakage
+n-out-of-n bootstrap puts duplicates in both CV train and validation folds → under-regularised fits in the filter. Replace with stratified subsampling without replacement, ideally CPSS (Shah & Samworth: complementary pairs of size n/2). Merge with C2.
+
+### A8. Execution envelope completeness
+- `PYTHONHASHSEED=0` in the container; sort candidate rules lexicographically before building Z.
+- List all thread variables (`OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS`) and SIMD dispatch control (`OPENBLAS_CORETYPE` / `NPY_DISABLE_CPU_FEATURES`).
+- Row order is a hidden seed (CV folds, saga sample order): **canonicalise row and column order inside `fit()`** (sort by key or row hash) and emit an audit manifest (data hash, params, commit, container digest, prediction hash). Supersedes A6.
+
+### D1 (extended). Seed-shopping argument — make it auditor-proof
+- Cite X-hacking (Sharma et al., ICML 2025, arXiv:2401.08513 — verify), predictive multiplicity (Marx, Calmon, Ustun, ICML 2020), model multiplicity (Black, Raghavan, Barocas, FAccT 2022).
+- Admit the limits: within the envelope, RuleFit with a logged seed is also deterministic; shopping remains possible via row order and hyperparameters unless rows are canonicalised (A8) and hyperparameters pre-registered.
+- New experiment (cheap): vary ERF's *internal* base seed over 20–50 values on the fixed split; report rule-set similarity and prediction ambiguity/discrepancy. This shows whether the frequency filter actually reduces arbitrariness or just hides the seed.
+
+### D5. Absorption diagnostics definitions
+Rename sklearn's C (inverse regularisation) to avoid clashing with the confirmatory set C; run the counterfactual refits at the final model's exact (C_reg, l1_ratio), not ridge; compute VIF from centred columns (with intercept).
+
+### D6. Notation and pseudo-code
+Define m_j piecewise (mean for linear terms, 0 for rule columns); use β^std in the penalty display; write the back-transformation β_j = β̃_j/(s_j√w_j), β_0 = β̃_0 − Σ β_j m_j; Algorithm 1 lines 6/9 use the 1e-10 threshold; spell out the l1_ratio grid and Cs grid; Z̃ notation.
+
+### D7. Experiments table hygiene
+- Run Table 2 at tol = 1e-4 (library default) or report both.
+- Split "43, 42, 48 terms" into linear / tree rules / expert rules, for ERF and RuleFit (mean ± sd).
+- Say "± = sd across 100 seeds on one split".
+- Report the default (w_c = 1e-2, w_o = 0.3) row separately in the sensitivity study.
+- State whether the Taiwan subsample is stratified; cite HMEQ's source.
+
+### B1 (revised protocol, per review 4)
+- 25–50 stratified 90 % subsamples without replacement (not 100 bootstraps), all preprocessing refitted inside each subsample.
+- Metrics: Jaccard **and Sørensen–Dice** (SIRUS uses Dice); chance-corrected stability Φ̂ (Nogueira, Sechidis, Brown, JMLR 2018); **semantic coverage stability** (Hungarian matching of rule activation vectors on the test set, to absorb threshold jitter); prediction ambiguity/discrepancy, Spearman between fits.
+- Ablation ladder: A0 fixed-seed RuleFit → A1 + expert weights, no filter (≈ Ebner's ERF) → A2 filter, no expert rules → A3 full → A4 full + sign-constrained deduplicated confirmatory block.
+- Baselines: SIRUS, L1/L2 logistic on raw features + expert rules; optional scorecard baselines (RiskSLIM / FasterRisk, verify) and HELOC (has monotonicity directions).
+- Calibration: Brier, log-loss, ECE (10 quantile bins); prefer Platt (keeps log-odds additivity) over isotonic.
+
+### C3 (refined by review 4)
+Sign constraints alone will pin β_c to 0 (violating Definition 1) or to a cosmetic ε when the effect is already carried by collinear terms (German: the ordinal checking-status variable). Before the bootstrap loop, **prune candidate rules that duplicate or strongly overlap a confirmatory rule**, and offer either excluding/residualising the raw column behind it, or a **two-stage offset fit** (fit the sign-constrained confirmatory block first, pass its linear predictor as an offset to the penalised selection of the rest).
+
+### C4 (refined). Speed-ups that keep bit-identity
+Parallel bootstraps across processes, aggregated in fixed order (bit-identical); default tol and a 2–3 value l1_ratio grid inside the bootstraps, full grid only in the final fit; deduplicate identical rule columns before step 3; pathwise coordinate descent (glmnet-style) with penalty factors and box constraints (also solves D2/C3).
+
+### E2. Tax-audit section — legal and statistical precision
+- **GDPR:** cite CJEU C-634/21 *SCHUFA* (7 Dec 2023), where a score a decision-maker "draws strongly" on can itself fall under Art. 22(1). Human review must be meaningful (WP251rev.01). Tax authorities rely on Art. 22(2)(b) and Art. 6(1)(e) and Art. 23 with national law; frame determinism and confirmatory legal criteria as Art. 22(2)(b) "suitable safeguards".
+- **Fairness:** compare false-positive audit rates (unproductive audits on compliant taxpayers) on the random sample, not only score distributions.
+- **IPW through Algorithm 1:** weighted moments for m_j and s_j; `sample_weight` to the tree generator and the elastic net; bootstrap stratified by audit source without weighting the draws (avoid v²); stabilise or clip the weights; AIPW. Rank by expected yield per audit hour.
+- Positivity: positivity, MNAR (Crook & Banasik 2004, reject inference).
+
+### Verified on 23/11 vs still to verify
+- **Verified:** Ebner ERF exists (GitHub LuisaEbner/ERF; master thesis; Nalenz 2021 dissertation acknowledges Ebner as co-author on expert knowledge in rule ensembles).
+- **To verify:** the 2021 workshop paper venue, Sharma et al. 2025 X-hacking, Black et al. 2022, Marx et al. 2020, Nogueira et al. 2018, Sechidis et al. 2019, Ustun & Rudin 2019 (RiskSLIM), Liu et al. 2022 (FasterRisk; page numbers differ between two mentions in the review), Chen et al. 2022 (DSS), Henderson et al. 2023 (IRS audits), CJEU C-634/21 (well known; check citation format).

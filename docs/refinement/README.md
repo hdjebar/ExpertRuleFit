@@ -2,6 +2,9 @@
 
 Handoff folder to continue improving ExpertRuleFit (code + paper) in a new conversation or a Claude Code session. Prepared 22/11/2026.
 
+## ⚠ P0 — prior work
+A method with the same name and the same core mechanism exists (Expert RuleFit, Ebner et al., LMU, R package ERF). Read the P0 box at the top of `ACTION_PLAN.md` before any other work.
+
 ## Start here
 
 1. Open a new session on the repo `hdjebar/ExpertRuleFit`.
@@ -24,6 +27,7 @@ Handoff folder to continue improving ExpertRuleFit (code + paper) in a new conve
 | `review/2026-11-22_paperreview-ai_review.md` | Review 1 (paperreview.ai) |
 | `review/2026-11-22_review-2_after-phase-a.md` | Review 2, of the paper after Phase A |
 | `review/2026-11-23_review-3_paper-v2.md` | Review 3, of paper v2 (7 pages) |
+| `review/2026-11-23_review-4_google-deepreview.md` | Review 4, Google Deep Review of paper v2 — **found prior work (P0)** |
 
 ## Status on 22/11/2026
 
