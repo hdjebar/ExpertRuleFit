@@ -402,6 +402,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Number of CPU cores for cross-validation. ``None`` means 1 core.
         Use ``-1`` for all cores (caution on shared infrastructure).
 
+    row_order : {"as_given", "canonical"}, default="as_given"
+        ``"canonical"`` sorts the training rows (lexicographically by the
+        feature values, then the label) before fitting, so any permutation
+        of the same rows gives bitwise-identical output. With
+        ``"as_given"`` the result depends on row order, because the
+        boosting subsamples, the bootstrap draws and the (unshuffled) CV
+        folds index rows by position.
+
     standardize : bool, default=True
         Standardise the candidate columns before weighting and fitting:
         linear terms are centred and divided by their standard deviation,
@@ -490,6 +498,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         deterministic=True,
         thread_limit=1,
         standardize=True,
+        row_order="as_given",
     ):
         self.n_estimators = n_estimators
         self.tree_size = tree_size
@@ -506,6 +515,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.deterministic = deterministic
         self.thread_limit = thread_limit
         self.standardize = standardize
+        self.row_order = row_order
 
     # ------------------------------------------------------------------
     # Validation
@@ -635,6 +645,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.optional_rules_ = optional_rules
 
         self._validate_inputs(X, y)
+        if self.row_order not in ("as_given", "canonical"):
+            raise ValueError(
+                f"row_order must be 'as_given' or 'canonical', got {self.row_order!r}"
+            )
+        if self.row_order == "canonical":
+            # np.lexsort: last key is primary -> feature 0 first, label last
+            keys = [y] + [X[:, j] for j in range(X.shape[1] - 1, -1, -1)]
+            order = np.lexsort(keys)
+            X, y = X[order], y[order]
         self._validate_expert_rules(confirmatory_rules, X, "Confirmatory")
         self._validate_expert_rules(optional_rules, X, "Optional")
 
@@ -1450,12 +1469,50 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         return all_reasons
 
-    def audit_bundle(self):
+    def fingerprint(self, X=None):
+        """SHA-256 fingerprints of the fitted model, for re-execution checks.
+
+        Parameters
+        ----------
+        X : array-like, optional
+            Reference data (e.g. a held-out test set). If given, the
+            fingerprint also covers ``predict_proba(X)[:, 1]``.
+
+        Returns
+        -------
+        fp : dict
+            ``rules_sha256``: sorted names of active terms;
+            ``coefficients_sha256``: intercept and coefficients (float64
+            bytes, original scale, in stable-column order) with their names;
+            ``predictions_sha256`` (if ``X`` is given): float64 bytes of the
+            predicted probabilities, plus ``n_predictions``.
+        """
+        import hashlib
+        import json
+
+        check_is_fitted(self, ["base_rulefit_", "final_model_"])
+        stable_idx = np.where(self.stable_mask_)[0]
+        names = [self.rule_names_[i] for i in stable_idx]
+        coefs = np.ascontiguousarray(self._get_true_coefficients(), dtype=np.float64)
+        active = sorted(n for n, c in zip(names, coefs) if abs(c) > 1e-10)
+        h_rules = hashlib.sha256(json.dumps(active).encode()).hexdigest()
+        h = hashlib.sha256(json.dumps(names).encode())
+        h.update(np.float64(self._get_true_intercept()).tobytes())
+        h.update(coefs.tobytes())
+        fp = {"rules_sha256": h_rules, "coefficients_sha256": h.hexdigest()}
+        if X is not None:
+            p = np.ascontiguousarray(self.predict_proba(X)[:, 1], dtype=np.float64)
+            fp["predictions_sha256"] = hashlib.sha256(p.tobytes()).hexdigest()
+            fp["n_predictions"] = int(p.shape[0])
+        return fp
+
+    def audit_bundle(self, X_reference=None):
         """Generate an audit bundle for regulatory review.
 
         Returns a dict containing all model artifacts needed for audit:
-        rule definitions, coefficients, bootstrap frequencies, and
-        environment metadata.
+        rule definitions, coefficients, bootstrap frequencies, environment
+        metadata and SHA-256 fingerprints (see :meth:`fingerprint`). Pass
+        ``X_reference`` (e.g. the test set) to fingerprint predictions too.
 
         Returns
         -------
@@ -1484,6 +1541,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "model_type": "ExpertRuleFit",
             "intercept": self._get_true_intercept(),
             "standardize": getattr(self, "standardize", False),
+            "row_order": getattr(self, "row_order", "as_given"),
+            "fingerprint": self.fingerprint(X_reference),
             "n_candidate_features": len(self.rule_names_),
             "n_stable_features": int(self.stable_mask_.sum()),
             "n_active_features": sum(1 for r in rules if r["active"]),

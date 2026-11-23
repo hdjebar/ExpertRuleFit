@@ -119,6 +119,11 @@ Preliminary sensitivity results (German Credit only, one split, pinned stack; `e
 
 After standardisation, solver conditioning depends on the 1/√w_c ratio rather than on the dataset; the HMEQ and Taiwan runs are confirmation.
 
+### Re-execution checks
+
+- `erf.fingerprint(X_test)` returns SHA-256 hashes of the active rule set, of the intercept and coefficients, and of the predicted probabilities on `X_test`. `audit_bundle(X_reference=X_test)` includes them. Two runs are the same model if, and only if, the fingerprints match.
+- **Row order matters by default.** Boosting subsamples, bootstrap draws and CV folds index rows by position, so shuffling the training rows changes the model much as changing a seed would (see `experiments/results/row_order/`). `row_order="canonical"` sorts the rows deterministically before fitting: any permutation of the same rows then gives bitwise-identical output.
+
 ### With EBM-Discovered Interactions (automated pipeline)
 
 ```python
