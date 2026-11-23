@@ -125,14 +125,14 @@ standardised coefficients:
 $$\text{L1 term}\propto \sqrt{w_j}\,|\beta_j|,\qquad \text{L2 term}\propto w_j\,\beta_j^2 .$$
 With $w_c=10^{-2}$ the $\ell_1$ penalty on confirmatory rules is reduced
 by a factor of 10 and the $\ell_2$ penalty by a factor of 100.
-Coefficients and the intercept are mapped back to the original scale
-before reporting. Earlier versions used $w_c=10^{-8}$ without
-standardisation. A confirmatory column was then $10^4$ times larger than
-the others, which made the saga solver stop far from the optimum without
-a convergence warning. After standardisation, the conditioning of the
-problem depends on the ratio $1/\sqrt{w_c}$ rather than on the data;
-$w_c=10^{-2}$ is the smallest value that fitted without convergence
-warnings in the sensitivity study below. Inclusion of confirmatory rules
+Coefficients and the intercept are mapped back to the original scale.
+Earlier versions used $w_c=10^{-8}$ without standardisation; the
+confirmatory column was then $10^4$ times larger than the others and
+saga stopped far from the optimum without a convergence warning. After
+standardisation, conditioning depends on $1/\sqrt{w_c}$ rather than on
+the data, and $10^{-2}$ is the smallest value that fitted without
+warnings (Section <a href="#sec:exp" data-reference-type="ref"
+data-reference="sec:exp">5</a>). Inclusion of confirmatory rules
 (Definition <a href="#def:inclusion" data-reference-type="ref"
 data-reference="def:inclusion">1</a>) does not rely on $w_c$.
 
@@ -163,22 +163,15 @@ $(Z-m)/(s\sqrt{w})$
 </div>
 
 The user’s `random_state` is ignored (a warning is emitted); all
-internal seeds derive from a fixed base seed. Two extensions are
-provided: `discover_interaction_rules`, which uses an EBM to find
-interacting feature pairs and thresholds and returns them as *optional*
-rules, and `DualModel`, which stacks EBM and
-<span class="smallcaps">ExpertRuleFit</span> scores with a logistic
-meta-model trained on out-of-fold predictions. Optional post-hoc
-calibration (Platt or isotonic, 5-fold) is available but off by default.
-
-#### Expert-imposed versus data-discovered rules.
-
-Confirmatory status is reserved for rules an expert imposes. Rules found
-by the EBM extension are data-discovered: they enter as optional rules,
-with a reduced penalty, and must pass the frequency filter like any tree
-rule. An expert can promote one to confirmatory after review; each
-discovered rule records its provenance (`source="ebm_discovered"`) for
-the audit trail.
+internal seeds derive from a fixed base seed. Post-hoc calibration
+(Platt or isotonic) is available but off by default. `DualModel` stacks
+EBM and <span class="smallcaps">ExpertRuleFit</span> scores with a
+logistic meta-model trained on out-of-fold predictions.
+`discover_interaction_rules` uses an EBM to propose interaction rules;
+being data-discovered, they enter as *optional* rules with provenance
+`source="ebm_discovered"` and must pass the frequency filter.
+Confirmatory status is reserved for rules an expert imposes or has
+reviewed.
 
 #### Sign check and absorption diagnostics.
 
@@ -186,14 +179,11 @@ A confirmatory rule may declare an expected sign $s_c\in\{+1,-1\}$.
 After fitting, the estimator compares $\operatorname{sign}(\beta_c)$
 with $s_c$, sets a flag `confirmatory_sign_ok_` and emits a warning for
 each contradiction; the sign is checked, not enforced. For each
-confirmatory rule it also reports, on the training data, the largest
-absolute correlation with any other candidate column, its variance
-inflation factor among retained columns, the candidate columns with
-$|r|\ge 0.5$ that are inactive in the final model (removed by the
-frequency filter or set to zero), and the change in the coefficients of
-retained correlated columns when the confirmatory rule is removed (ridge
-refits with the final model’s $C$ and the same weights). These
-diagnostics make absorption visible; they do not prevent it.
+confirmatory rule it also reports its largest correlation with any other
+candidate column, its variance inflation factor, the correlated
+candidates ($|r|\ge 0.5$) left inactive in the final model, and how
+their coefficients change when the rule is removed. These diagnostics
+make absorption visible; they do not prevent it.
 
 # Reproducibility guarantee
 
@@ -205,6 +195,29 @@ single-threaded BLAS and OpenMP; the fixed internal seeds; a validated
 input schema with stable feature order; and identical platform settings.
 A container recipe (base image pinned by digest, dependencies installed
 from a hash-locked file) is provided in the repository.
+
+#### Why not log the seed?
+
+Logging the seed, code and data hash makes one RuleFit run replayable,
+but not the choice of that run. In
+Table <a href="#tab:results" data-reference-type="ref"
+data-reference="tab:results">1</a>, 100 seeds gave 100 different rule
+sets with nearly the same AUC (standard deviation at most 0.009), so any
+of them is an equally defensible model. A modeller can try seeds and
+keep the one whose rules look most plausible (“seed shopping”), and the
+log shows only the seed that was kept. With
+<span class="smallcaps">ExpertRuleFit</span> the seed has no effect: for
+given data, settings and software stack there is one model, and the
+remaining choices are settings recorded in the audit bundle. Accepting a
+user seed and deriving a logged chain of internal seeds from it would
+bring the free choice back, because different user seeds would in
+general give different bootstrap draws and rule sets, and the guarantee
+would again be “replayable given the seed”. Fixing the base seed instead
+makes it part of the method, like the number of bootstrap draws. The
+fixed draw is still one draw among many; how much the result depends on
+it is the stability question of
+Section <a href="#sec:exp" data-reference-type="ref"
+data-reference="sec:exp">5</a>.
 
 The guarantee does not cover different data (adding or correcting rows
 may change the rule set), a different software stack or CPU, or
@@ -229,22 +242,18 @@ and all columns are standardised. All preprocessing statistics are
 fitted on the training split. RuleFit (imodels, 250 trees of depth 4, at
 most 50 rules) is fitted 100 times with `random_state` $=0,\dots,99$.
 <span class="smallcaps">ExpertRuleFit</span> is fitted with its default
-settings and no expert rules, except for the solver tolerance: the
-benchmark uses $10^{-6}$ instead of the library default $10^{-4}$, a
-setting inherited from the original benchmark script and kept so that
-the rerun changes only the preprocessing and the software stack. It is
-fitted three times with `random_state` $=0,1,2$, each run in a separate
-process; since the seed is ignored by design, more runs would repeat the
-same computation, and we instead check that the three runs agree bit for
-bit, comparing a hash of the rule set and the SHA-256 digest of the
-test-set probabilities. A run’s rule set is the set of terms with
-non-zero coefficient; we report how many RuleFit runs share the most
-frequent rule set and the Jaccard similarity averaged over all pairs of
-runs. All runs use the pinned software stack (Python 3.11.18,
-scikit-learn 1.7.2, NumPy 2.4.6, imodels 3.0.4, single-threaded), in a
-container built from the recipe in the repository. An earlier version of
-this table fitted the preprocessing on the full dataset before the split
-and used an unpinned stack.
+settings and no expert rules, except for the solver tolerance: $10^{-6}$
+instead of the default $10^{-4}$, inherited from the original benchmark
+and kept so that the rerun changes only the preprocessing and the
+software stack. Since it ignores the seed, it is fitted three times
+($\texttt{random\_state}=0,1,2$, separate processes) to check that the
+runs agree bit for bit (hash of the rule set, SHA-256 of the test
+probabilities). A run’s rule set is the set of terms with non-zero
+coefficient; we report how many RuleFit runs share the most frequent
+rule set and the Jaccard similarity averaged over all pairs of runs. All
+runs use the pinned software stack (Python 3.11.18, scikit-learn 1.7.2,
+NumPy 2.4.6, imodels 3.0.4, single-threaded), in a container built from
+the recipe in the repository.
 
 <div id="tab:results">
 
@@ -282,13 +291,10 @@ dependence without loss of discrimination on these datasets.
 
 #### What they do not show.
 
-Because <span class="smallcaps">ExpertRuleFit</span> ignores
-`random_state`, varying it does not change the computation: identical
-output across runs follows from the design and is not an empirical
-finding about stability; the three runs only confirm that the
-implementation is deterministic within the execution envelope. The
-comparison sets determinism against seed sensitivity. AUC is also
-reported on a single split without confidence intervals.
+Identical output across runs follows from the design; the three runs
+only confirm that the implementation is deterministic within the
+execution envelope. It is not evidence of stability under data change.
+AUC is reported on a single split without confidence intervals.
 
 #### Penalty-weight sensitivity (German Credit).
 
@@ -300,17 +306,13 @@ credit-risk criteria chosen by the author, not rules supplied by domain
 experts: a confirmatory rule “checking account below 0 DM” and an
 optional rule “duration above 24 months”, both expected to raise the
 default probability. Saga raised 360–361 convergence warnings per fit at
-$w_c=10^{-8}$, 66–69 at $10^{-6}$, 3–6 at $10^{-4}$ and none at
-$10^{-2}$ or $1$. Test AUC was 0.753–0.756 at $w_c=10^{-8}$ and
-0.784–0.797 for all larger values, and fits at $10^{-2}$ took about a
-third of the time of fits at $10^{-4}$. The confirmatory coefficient had
-the expected positive sign only at $w_c\le 10^{-6}$, in fits that had
-not converged; this agreement is an artefact of non-convergence. In
-every converged fit the coefficient was negative: the model also retains
-the ordinal checking-status variable and tree rules containing the same
-condition, which carry the effect, and the sign check flags the
-contradiction. The optional rule was retained in every fit. These
-results cover one dataset and one split.
+$w_c=10^{-8}$, 66–69 at $10^{-6}$, 3–6 at $10^{-4}$ and none from
+$10^{-2}$; test AUC was 0.753–0.756 at $10^{-8}$ and 0.784–0.797
+otherwise. The confirmatory coefficient had the expected positive sign
+only at $w_c\le 10^{-6}$, in fits that had not converged. In every
+converged fit it was negative, because the ordinal checking-status
+variable and tree rules containing the same condition carry the effect;
+the sign check flags the contradiction. One dataset, one split.
 
 #### Proposed perturbation protocol.
 
