@@ -15,18 +15,12 @@ data-reference="sec:exp">5</a>), standard RuleFit returned a different
 rule set for each of 100 seeds, with a mean pairwise Jaccard similarity
 of 0.04–0.06.
 
-In regulated settings such as credit, insurance or tax administration,
-this blocks deployment for three reasons:
-
-- **Re-execution.** A supervisor who re-runs the model must obtain the
-  same output, otherwise decisions based on it cannot be audited.
-
-- **Explanation.** A rule given to an analyst as the reason for a score
-  should not disappear at retraining for reasons unrelated to the data.
-
-- **Expert knowledge.** Criteria required by regulation or by business
-  experts can be removed by the penalty when their signal is weak or
-  collinear with other rules.
+In regulated settings such as credit, insurance or tax administration
+this blocks deployment: a supervisor who re-runs the model must obtain
+the same output; a rule given as the reason for a score should not
+disappear at retraining for reasons unrelated to the data; and criteria
+required by regulation or by experts can be removed by the penalty when
+their signal is weak or collinear with other rules.
 
 #### Contributions.
 
@@ -40,23 +34,29 @@ this blocks deployment for three reasons:
     (Section <a href="#sec:method" data-reference-type="ref"
     data-reference="sec:method">3</a>).
 
-2.  A precise statement of the reproducibility guarantee as determinism
-    within an execution envelope, and of what it does not cover
+2.  The reproducibility guarantee stated as determinism within an
+    execution envelope, with its limits
     (Section <a href="#sec:repro" data-reference-type="ref"
     data-reference="sec:repro">4</a>).
 
-3.  A benchmark on three credit datasets, together with an explicit
-    analysis of what it does and does not show, and a protocol for
-    measuring stability under data perturbation
+3.  A benchmark on three credit datasets, an ablation, and a protocol
+    for stability under data perturbation
     (Section <a href="#sec:exp" data-reference-type="ref"
     data-reference="sec:exp">5</a>).
 
-4.  An open-source Python implementation built on `imodels` and
-    `scikit-learn`. All results refer to
-    <span class="smallcaps">ExpertRuleFit</span> 0.7.0, commit
-    `281d5a6`, with 66 automated tests passing in a container built from
-    `python:3.11-slim@sha256:07d48240…` and a hash-locked dependency
-    file (SHA-256 `990ced9d…`).
+4.  An open-source implementation built on `imodels` and `scikit-learn`,
+    with code, tests, scripts, results and a container recipe at
+    <https://github.com/hdjebar/ExpertRuleFit>; datasets are public.
+    Table <a href="#tab:results" data-reference-type="ref"
+    data-reference="tab:results">1</a> was produced with
+    <span class="smallcaps">ExpertRuleFit</span> 0.7.0 at commit
+    `281d5a6`, and the German Credit results of
+    Section <a href="#sec:exp" data-reference-type="ref"
+    data-reference="sec:exp">5</a> at commit `ad21d89`, where default
+    settings reproduce the earlier outputs exactly and 93 automated
+    tests pass. Both ran in a container built from `python:3.11-slim`
+    (digest `07d48240…`) with a hash-locked dependency file (SHA-256
+    `990ced9d…`).
 
 # Related work
 
@@ -88,19 +88,14 @@ in credit scoring, fix the direction of an effect;
 <span class="smallcaps">ExpertRuleFit</span> enforces inclusion, not
 direction.
 
-#### Glass-box additive models.
+#### Glass-box models and multiplicity.
 
 Explainable Boosting Machines fit additive shape functions with pairwise
-interactions; we use them to propose interaction rules and in a stacked
-variant.
-
-#### Model multiplicity.
-
-Many models fit the data almost equally well . In that view, RuleFit’s
-instability is a random draw from the Rashomon set, and
-<span class="smallcaps">ExpertRuleFit</span> fixes the draw. This makes
-the output auditable but does not show that the chosen model is better
-than its neighbours.
+interactions; we use them to propose interaction rules, in a stacked
+variant and as a baseline. Many models fit the data almost equally well
+: RuleFit’s instability is a random draw from this Rashomon set, and
+<span class="smallcaps">ExpertRuleFit</span> fixes the draw, which makes
+the output auditable but does not make it better than its neighbours.
 
 # Method
 
@@ -126,13 +121,11 @@ $$\text{L1 term}\propto \sqrt{w_j}\,|\beta_j|,\qquad \text{L2 term}\propto w_j\,
 With $w_c=10^{-2}$ the $\ell_1$ penalty on confirmatory rules is reduced
 by a factor of 10 and the $\ell_2$ penalty by a factor of 100.
 Coefficients and the intercept are mapped back to the original scale.
-Earlier versions used $w_c=10^{-8}$ without standardisation; the
-confirmatory column was then $10^4$ times larger than the others and
-saga stopped far from the optimum without a convergence warning. After
-standardisation, conditioning depends on $1/\sqrt{w_c}$ rather than on
-the data, and $10^{-2}$ is the smallest value that fitted without
-warnings (Section <a href="#sec:exp" data-reference-type="ref"
-data-reference="sec:exp">5</a>). Inclusion of confirmatory rules
+Earlier versions used $w_c=10^{-8}$ without standardisation, which made
+saga stop far from the optimum without a warning; $10^{-2}$ is the
+smallest value that fitted without warnings
+(Section <a href="#sec:exp" data-reference-type="ref"
+data-reference="sec:exp">5</a>). Inclusion
 (Definition <a href="#def:inclusion" data-reference-type="ref"
 data-reference="def:inclusion">1</a>) does not rely on $w_c$.
 
@@ -175,15 +168,33 @@ reviewed.
 
 #### Sign check and absorption diagnostics.
 
-A confirmatory rule may declare an expected sign $s_c\in\{+1,-1\}$.
-After fitting, the estimator compares $\operatorname{sign}(\beta_c)$
-with $s_c$, sets a flag `confirmatory_sign_ok_` and emits a warning for
-each contradiction; the sign is checked, not enforced. For each
-confirmatory rule it also reports its largest correlation with any other
-candidate column, its variance inflation factor, the correlated
-candidates ($|r|\ge 0.5$) left inactive in the final model, and how
-their coefficients change when the rule is removed. These diagnostics
-make absorption visible; they do not prevent it.
+A confirmatory rule may declare an expected sign $s_c\in\{+1,-1\}$; in
+the refit mode a contradiction is flagged and warned about, not
+prevented. Diagnostics report, per confirmatory rule, its largest
+correlation with other candidate columns, its variance inflation factor,
+and the correlated candidates it leaves inactive, which makes absorption
+visible.
+
+#### Constrained mode.
+
+The refit step guarantees inclusion but not direction. With the option
+`confirmatory_mode` set to `"constrained"`, the final step instead
+solves one convex problem on the stable columns $\tilde z_i$
+(standardised, not rescaled by $w$):
+$$\min_{\beta_0,\beta}\ \frac1n\sum_{i=1}^n \log\bigl(1+e^{-(2y_i-1)(\beta_0+\tilde z_i^\top\beta)}\bigr)+\lambda\sum_{j\notin C} v_j\Bigl(\alpha|\beta_j|+\tfrac{1-\alpha}{2}\beta_j^2\Bigr)
+\quad\text{s.t. } s_c\beta_c\ge 0\ \ (c\in C,\ s_c\ \text{declared}),$$
+with $v_j=w_o$ for optional rules and 1 otherwise, no penalty on $C$,
+and $\lambda=1/(Cn)$ and $\alpha$ from the cross-validation of the refit
+mode. The problem is convex; if $\alpha<1$ and $[\mathbf 1, Z_C]$ has
+full column rank it is strictly convex and the solution unique even when
+tree rules duplicate a confirmatory rule, which motivates a ridge-only
+option ($\alpha=0$). We solve it with FISTA and projection onto the
+constraints, without randomness. A confirmatory coefficient held at zero
+with the gradient pointing past the bound is reported as *bound-active*:
+given the other terms, the data oppose the expert’s sign, and the rule
+is not included in the sense of
+Definition <a href="#def:inclusion" data-reference-type="ref"
+data-reference="def:inclusion">1</a>.
 
 # Reproducibility guarantee
 
@@ -199,23 +210,25 @@ from a hash-locked file) is provided in the repository.
 #### Why not log the seed?
 
 Logging the seed, code and data hash makes one RuleFit run replayable,
-but not the choice of that run. In
+but not the choice of that run: in
 Table <a href="#tab:results" data-reference-type="ref"
-data-reference="tab:results">1</a>, 100 seeds gave 100 different rule
-sets with nearly the same AUC (standard deviation at most 0.009), so any
-of them is an equally defensible model. A modeller can try seeds and
-keep the one whose rules look most plausible (“seed shopping”), and the
+data-reference="tab:results">1</a>, 100 seeds gave 100 rule sets with
+nearly the same AUC (standard deviation at most 0.009). A modeller can
+keep the seed whose rules look most plausible (“seed shopping”), and the
 log shows only the seed that was kept. With
 <span class="smallcaps">ExpertRuleFit</span> the seed has no effect: for
 given data, settings and software stack there is one model, and the
-remaining choices are settings recorded in the audit bundle. Accepting a
-user seed and deriving a logged chain of internal seeds from it would
-bring the free choice back, because different user seeds would in
-general give different bootstrap draws and rule sets, and the guarantee
-would again be “replayable given the seed”. Fixing the base seed instead
-makes it part of the method, like the number of bootstrap draws. The
-fixed draw is still one draw among many; how much the result depends on
-it is the stability question of
+remaining choices are settings recorded in the audit bundle. Row order
+is a second hidden choice of the same kind, because bootstrap draws and
+cross-validation folds index rows by position; `row_order="canonical"`
+sorts the rows before fitting, so that only the set of rows matters
+(Section <a href="#sec:exp" data-reference-type="ref"
+data-reference="sec:exp">5</a>). Deriving a logged chain of internal
+seeds from a user seed would bring the free choice back, since different
+user seeds would give different bootstrap draws; fixing the base seed
+makes it part of the method, like the number of draws. The fixed draw is
+still one draw among many; how much the result depends on it is the
+stability question of
 Section <a href="#sec:exp" data-reference-type="ref"
 data-reference="sec:exp">5</a>.
 
@@ -225,9 +238,7 @@ dependence on row order where underlying algorithms break ties by
 position. Identity across machines has not been tested: all results in
 this report come from one x86-64 machine (Intel Xeon, 2.1 GHz), and runs
 on another CPU type, even with the same container, may differ in the
-last bits of floating-point results. Determinism makes re-execution
-auditable; robustness to small data changes, which governs whether
-explanations survive retraining, is a distinct property.
+last bits of floating-point results.
 
 # Experiments
 
@@ -236,11 +247,11 @@ explanations survive retraining, is a distinct property.
 We use German Credit (UCI, 1,000 rows), Taiwan Credit (UCI; a random
 subsample of 5,000 of the 30,000 rows, seed 42, to bound runtime) and
 HMEQ (5,960 rows). Each dataset is split once into 80% training and 20%
-test data (stratified, seed 42). Missing values are imputed (median, or
-mode for categorical columns), categorical columns are ordinally encoded
-and all columns are standardised. All preprocessing statistics are
-fitted on the training split. RuleFit (imodels, 250 trees of depth 4, at
-most 50 rules) is fitted 100 times with `random_state` $=0,\dots,99$.
+test data (stratified, seed 42). Missing values are imputed (median or
+mode), categorical columns ordinally encoded and all columns
+standardised, with statistics fitted on the training split. RuleFit
+(imodels, 250 trees of depth 4, at most 50 rules) is fitted 100 times
+with `random_state` $=0,\dots,99$.
 <span class="smallcaps">ExpertRuleFit</span> is fitted with its default
 settings and no expert rules, except for the solver tolerance: $10^{-6}$
 instead of the default $10^{-4}$, inherited from the original benchmark
@@ -248,9 +259,8 @@ and kept so that the rerun changes only the preprocessing and the
 software stack. Since it ignores the seed, it is fitted three times
 ($\texttt{random\_state}=0,1,2$, separate processes) to check that the
 runs agree bit for bit (hash of the rule set, SHA-256 of the test
-probabilities). A run’s rule set is the set of terms with non-zero
-coefficient; we report how many RuleFit runs share the most frequent
-rule set and the Jaccard similarity averaged over all pairs of runs. All
+probabilities). A rule set is the set of terms with non-zero
+coefficient; Jaccard similarity is averaged over all pairs of runs. All
 runs use the pinned software stack (Python 3.11.18, scikit-learn 1.7.2,
 NumPy 2.4.6, imodels 3.0.4, single-threaded), in a container built from
 the recipe in the repository.
@@ -265,64 +275,67 @@ the recipe in the repository.
 | Taiwan Credit |         100         |     1/100     |                     3/3                      | 0.764 ($\pm$<!-- -->0.003) |                    0.769                     |
 | HMEQ          |         100         |     1/100     |                     3/3                      | 0.903 ($\pm$<!-- -->0.003) |                    0.903                     |
 
-Seed sensitivity and discrimination (single train/test split, no expert
-rules). RuleFit: 100 seeds; AUC is the mean over seeds.
-<span class="smallcaps">ExpertRuleFit</span>: three runs with
-bitwise-identical output.
+Seed sensitivity (single split, no expert rules). RuleFit: 100 seeds,
+mean AUC. <span class="smallcaps">ExpertRuleFit</span>: three
+bitwise-identical runs.
 
 </div>
 
 Mean pairwise Jaccard similarity of RuleFit rule sets is 0.045 (German
 Credit), 0.058 (Taiwan Credit), 0.036 (HMEQ). The three
 <span class="smallcaps">ExpertRuleFit</span> runs per dataset produced
-the same rule set (43, 42, 48 terms) and the same probabilities. One
-<span class="smallcaps">ExpertRuleFit</span> fit took between about 10
-minutes (German Credit) and 3.5 hours (HMEQ) single-threaded, against
-seconds for RuleFit.
+the same rule set (43, 42, 48 terms) and the same probabilities.
 
-#### What the results show.
+#### What the results show and do not show.
 
 Table <a href="#tab:results" data-reference-type="ref"
-data-reference="tab:results">1</a> uses no expert rules: it compares
-rule generation and selection only. RuleFit’s output depends heavily on
-the seed, so a single run cannot be reproduced without recording every
-seed. <span class="smallcaps">ExpertRuleFit</span> removes this
-dependence without loss of discrimination on these datasets.
+data-reference="tab:results">1</a> uses no expert rules. RuleFit’s
+output depends heavily on the seed;
+<span class="smallcaps">ExpertRuleFit</span> removes this dependence
+without loss of discrimination. Identical output follows from the
+design; the three runs confirm the implementation, not stability under
+data change. AUC comes from a single split without confidence intervals.
 
-#### What they do not show.
+#### Expert rules, ablation and row order (German Credit).
 
-Identical output across runs follows from the design; the three runs
-only confirm that the implementation is deterministic within the
-execution envelope. It is not evidence of stability under data change.
-AUC is reported on a single split without confidence intervals.
+With the library tolerance $10^{-4}$, every
+<span class="smallcaps">ExpertRuleFit</span> configuration gave
+identical fingerprints in three runs (tables and commands in the
+repository file `experiments/results/APPENDIX.md`). The expert rules are
+standard credit-risk criteria chosen by the author: a confirmatory rule
+“checking account below 0 DM” and an optional rule “duration above 24
+months”, both expected to raise the default probability. (i) *Penalty
+weight.* Over $w_c\in\{10^{-8},\dots,1\}$ and $w_o\in\{0.1,0.3,1\}$,
+saga raised 360–361 convergence warnings per fit at $w_c=10^{-8}$, 3–6
+at $10^{-4}$ and none from $10^{-2}$; AUC was 0.753–0.756 at $10^{-8}$
+and 0.784–0.797 otherwise. The confirmatory coefficient had the expected
+sign only in non-converged fits ($w_c\le10^{-6}$). (ii) *Constrained
+mode.* In the refit mode the coefficient is $-1.20$ (the ordinal
+checking-status variable and tree rules with the same condition carry
+the effect). In the constrained mode it is held at zero, bound-active,
+and reported as such; AUC moves from 0.797 to 0.792 (0.785 with ridge),
+and the solve takes 0.07 s after 755 FISTA iterations. (iii) *Ablation.*
+Without the frequency filter, AUC is 0.789 with 61 instead of 47 terms;
+without expert weighting, 0.784; without the refit step, unchanged (the
+refit was not triggered). RuleFit with a fixed internal seed reached
+0.800 with 40 terms in 3 s, against 233 s for
+<span class="smallcaps">ExpertRuleFit</span>, of which 90 % is the
+bootstrap filter; EBM reached 0.803 using all 80 terms for every case.
+On this split the frequency filter adds neither accuracy nor
+determinism; its value, if any, is stability under data perturbation,
+which the next protocol tests. (iv) *Row order.* Shuffling the training
+rows changed the rule set as much as a new RuleFit seed (Jaccard
+0.05–0.08 against the original order, probabilities differing by up to
+0.65); with `row_order="canonical"` all permutations gave
+bitwise-identical output.
 
-#### Penalty-weight sensitivity (German Credit).
+#### Perturbation protocol (not yet run).
 
-We fitted <span class="smallcaps">ExpertRuleFit</span> on the same split
-for $w_c\in\{10^{-8},10^{-6},10^{-4},10^{-2},1\}$ and
-$w_o\in\{0.1,0.3,1\}$ on the pinned software stack, with the library’s
-default solver tolerance ($10^{-4}$). The expert rules are standard
-credit-risk criteria chosen by the author, not rules supplied by domain
-experts: a confirmatory rule “checking account below 0 DM” and an
-optional rule “duration above 24 months”, both expected to raise the
-default probability. Saga raised 360–361 convergence warnings per fit at
-$w_c=10^{-8}$, 66–69 at $10^{-6}$, 3–6 at $10^{-4}$ and none from
-$10^{-2}$; test AUC was 0.753–0.756 at $10^{-8}$ and 0.784–0.797
-otherwise. The confirmatory coefficient had the expected positive sign
-only at $w_c\le 10^{-6}$, in fits that had not converged. In every
-converged fit it was negative, because the ordinal checking-status
-variable and tree rules containing the same condition carry the effect;
-the sign check flags the contradiction. One dataset, one split.
-
-#### Proposed perturbation protocol.
-
-To measure stability under data perturbation we will: (1) draw 100
-bootstrap or 90% subsamples of the training set; (2) fit RuleFit with a
-fixed seed and <span class="smallcaps">ExpertRuleFit</span> on each; (3)
-report mean pairwise Jaccard similarity and per-rule selection
-frequencies, as in ; (4) report AUC with confidence intervals over
-repeated splits; (5) include SIRUS and $\ell_2$-penalised logistic
-regression as baselines. These results are not yet available.
+100 bootstrap and 100 90%-subsamples of the training set; fixed-seed
+RuleFit, <span class="smallcaps">ExpertRuleFit</span>, SIRUS and
+$\ell_2$ logistic regression on each; pairwise Jaccard and per-rule
+selection frequencies as in ; AUC with confidence intervals over 20
+repeated splits.
 
 # Limitations
 
@@ -340,20 +353,18 @@ regression as baselines. These results are not yet available.
   contradiction is flagged, but the coefficient is not constrained. On
   German Credit the contradiction occurred in every converged fit
   (Section <a href="#sec:exp" data-reference-type="ref"
-  data-reference="sec:exp">5</a>); a sign-constrained, unpenalised
-  confirmatory block is the next planned change.
+  data-reference="sec:exp">5</a>). The optional constrained mode
+  enforces the sign, at the price of a bound-active, zero coefficient
+  when the data disagree; it is not yet the default.
 
 - **Weakly penalised rules can absorb signal.** With a small $w_c$, a
   confirmatory rule correlated with tree rules can take their weight; a
   weak or wrong expert rule then shapes the model. The diagnostics
   report this case; they do not correct it.
 
-- **Calibration not evaluated.** Penalised logistic outputs are often
-  too conservative; optional post-hoc calibration exists but reliability
-  curves and Brier scores have not been reported.
-
-- **Coarse frequency estimate.** With $B=10$, the 80% threshold means 8
-  of 10 draws; the draws are fixed, not resampled.
+- **Untested details.** Calibration (reliability curves) has not been
+  evaluated; with $B=10$ the 80% threshold means 8 of 10 fixed draws,
+  without error control.
 
 - **Runtime.** One fit runs about 2,100 saga fits, single-threaded to
   stay within the execution envelope; with the benchmark tolerance it
@@ -374,26 +385,22 @@ can state, a selection that can be replayed if contested, and
 inspectors’ criteria kept in the model. We sketch a design; the method
 has not been applied to tax data.
 
-| Model element         | Tax-audit counterpart                                                                                                                |
-|:----------------------|:-------------------------------------------------------------------------------------------------------------------------------------|
-| Target $y$            | Audit outcome, e.g. adjustment above a threshold set with the business                                                               |
-| Tree-derived rules    | Patterns in past audit results, e.g. high deductions combined with mainly salaried income                                            |
-| Confirmatory rules    | Legal or business criteria, e.g. a gap between declared salary and the employer’s statement, or deductions above a statutory ceiling |
-| Optional rules        | Inspectors’ hypotheses, kept only if supported by data                                                                               |
-| Determinism           | The selection list can be replayed for a contested case                                                                              |
-| Active rules per case | The explanation given to the reviewing agent                                                                                         |
+| Model element               | Tax-audit counterpart                                                                                                                |
+|:----------------------------|:-------------------------------------------------------------------------------------------------------------------------------------|
+| Target $y$                  | Audit outcome, e.g. adjustment above a threshold set with the business                                                               |
+| Tree-derived rules          | Patterns in past audit results, e.g. high deductions combined with mainly salaried income                                            |
+| Confirmatory rules          | Legal or business criteria, e.g. a gap between declared salary and the employer’s statement, or deductions above a statutory ceiling |
+| Optional rules; determinism | Inspectors’ hypotheses, kept only if supported by data; a contested selection can be replayed                                        |
 
 Mapping of model elements to a tax-audit setting (illustrative).
 
-Three conditions precede any pilot. First, *selection bias*: outcomes
-exist only for audited files, so a naive model learns past selection
-habits; a small random audit sample and inverse-probability weighting
-are needed. Second, *fairness and legal grounds*: variables without
-legal basis are excluded and score distributions compared across
-taxpayer groups. Third, *human decision*: the score suggests a file and
-an agent decides, consistent with Article 22 GDPR on automated
-decisions. A pilot would compare the hit rate per audit hour with the
-current selection method on the random sample.
+Three conditions precede any pilot: *selection bias* (outcomes exist
+only for audited files, so a small random audit sample and
+inverse-probability weighting are needed); *legal grounds and fairness*
+(no variables without legal basis, score distributions compared across
+taxpayer groups); and a *human decision* (the score suggests a file, an
+agent decides; Article 22 GDPR). A pilot would compare the hit rate per
+audit hour with the current method on the random sample.
 
 # Conclusion and future work
 
@@ -401,23 +408,22 @@ current selection method on the random sample.
 exactly reproducible, at no loss of AUC on three credit datasets in a
 benchmark without expert rules, and includes expert-imposed rules in the
 sense of Definition <a href="#def:inclusion" data-reference-type="ref"
-data-reference="def:inclusion">1</a>. The effect of expert rules on
-discrimination has been examined only in the German Credit sensitivity
-study, and their fitted sign can contradict the expert. Its central
-empirical claim so far is determinism, not stability under data change.
-Future work, in order of priority: sign-constrained, unpenalised
-confirmatory rules via bounded optimisation; the perturbation protocol
-of Section <a href="#sec:exp" data-reference-type="ref"
-data-reference="sec:exp">5</a> with SIRUS as baseline; profiling and
-reducing the runtime (e.g. bootstraps in parallel processes, which
-preserves determinism) and testing identity across machines; more
-bootstrap draws or error-controlled thresholds ; calibration assessment;
-and handling of selection bias when labels come only from past audits.
-
-#### Code and data availability.
-
-Code, tests, the validation script and a container recipe are at
-<https://github.com/hdjebar/ExpertRuleFit>. Datasets are public.
+data-reference="def:inclusion">1</a>. The effect of expert rules has
+been examined only on German Credit; there, the expert’s sign was
+contradicted by the data, and the constrained mode makes that
+contradiction explicit instead of reporting a coefficient of the wrong
+sign. Its central empirical claim so far is determinism, not stability
+under data change. A fixed-seed RuleFit matched its accuracy on German
+Credit, so the case for the frequency filter now rests on stability
+under perturbation. Future work, in order of priority: the perturbation
+protocol of Section <a href="#sec:exp" data-reference-type="ref"
+data-reference="sec:exp">5</a> with SIRUS and fixed-seed RuleFit as
+baselines; evaluation of the constrained mode on more datasets;
+profiling and reducing the runtime (e.g. bootstraps in parallel
+processes, which preserves determinism) and testing identity across
+machines; more bootstrap draws or error-controlled thresholds ;
+calibration assessment; and handling of selection bias when labels come
+only from past audits.
 
 <div class="thebibliography">
 
