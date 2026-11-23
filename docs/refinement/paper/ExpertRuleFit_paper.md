@@ -11,9 +11,9 @@ arbitrarily. A different seed for the tree ensemble or for the
 cross-validation folds therefore gives a different rule set on the same
 data. In our benchmark
 (Section <a href="#sec:exp" data-reference-type="ref"
-data-reference="sec:exp">5</a>), standard RuleFit returned the same rule
-set in 1 run out of 100, with a mean pairwise Jaccard similarity of
-about 0.05.
+data-reference="sec:exp">5</a>), standard RuleFit returned a different
+rule set for each of 100 seeds, with a mean pairwise Jaccard similarity
+of 0.04–0.06.
 
 In regulated settings such as credit, insurance or tax administration,
 this blocks deployment for three reasons:
@@ -105,16 +105,29 @@ where $r_j$ are tree-derived binary rules, $c_j$ confirmatory expert
 rules and $o_j$ optional expert rules. Predictions are
 $P(y=1\mid x)=\sigma(\beta_0+\sum_j \beta_j z_j)$.
 
-#### Penalty weighting.
+#### Standardisation and penalty weighting.
 
-Each column receives a weight $w_j$ (1 for linear terms and tree rules,
-$w_c=10^{-8}$ for confirmatory rules, $w_o=0.3$ for optional rules by
-default). Columns are rescaled as $\tilde z_j = z_j/\sqrt{w_j}$ before
-an elastic-net fit, which scales the effective penalties:
+Columns are first standardised with statistics from the training data:
+linear terms are centred and divided by their standard deviation $s_j$,
+rule columns are divided by $s_j$ only, which keeps them sparse. Each
+column then receives a weight $w_j$ (1 for linear terms and tree rules,
+$w_c=10^{-2}$ for confirmatory rules, $w_o=0.3$ for optional rules by
+default) and is rescaled as $\tilde z_j = (z_j-m_j)/(s_j\sqrt{w_j})$
+before an elastic-net fit, which scales the effective penalties on the
+standardised coefficients:
 $$\text{L1 term}\propto \sqrt{w_j}\,|\beta_j|,\qquad \text{L2 term}\propto w_j\,\beta_j^2 .$$
-With $w_c=10^{-8}$ the $\ell_1$ penalty on confirmatory rules is reduced
-by a factor of $10^4$. Coefficients are mapped back to the original
-scale before reporting.
+With $w_c=10^{-2}$ the $\ell_1$ penalty on confirmatory rules is reduced
+by a factor of 10 and the $\ell_2$ penalty by a factor of 100.
+Coefficients and the intercept are mapped back to the original scale
+before reporting. Earlier versions used $w_c=10^{-8}$ without
+standardisation. A confirmatory column was then $10^4$ times larger than
+the others, which made the saga solver stop far from the optimum without
+a convergence warning. After standardisation, the conditioning of the
+problem depends on the ratio $1/\sqrt{w_c}$ rather than on the data;
+$w_c=10^{-2}$ is the smallest value that fitted without convergence
+warnings in the sensitivity study below. Inclusion of confirmatory rules
+does not rely on $w_c$: they bypass the frequency filter, and the refit
+below restores any the solver sets to zero.
 
 <div class="algorithm">
 
@@ -151,12 +164,13 @@ After fitting, the estimator compares $\operatorname{sign}(\beta_c)$
 with $s_c$, sets a flag `confirmatory_sign_ok_` and emits a warning for
 each contradiction; the sign is checked, not enforced. For each
 confirmatory rule it also reports, on the training data, the largest
-absolute correlation with another retained column, its variance
-inflation factor, the retained rules with $|r|\ge 0.5$ that the final
-model set to zero, and the change in their coefficients when the
-confirmatory rule is removed (ridge refits with the final model’s $C$
-and the same weights). These diagnostics make absorption visible; they
-do not prevent it.
+absolute correlation with any other candidate column, its variance
+inflation factor among retained columns, the candidate columns with
+$|r|\ge 0.5$ that are inactive in the final model (removed by the
+frequency filter or set to zero), and the change in the coefficients of
+retained correlated columns when the confirmatory rule is removed (ridge
+refits with the final model’s $C$ and the same weights). These
+diagnostics make absorption visible; they do not prevent it.
 
 # Reproducibility guarantee
 
@@ -180,31 +194,52 @@ a distinct property.
 
 #### Data and protocol.
 
-We use German Credit (UCI, 1,000 rows), Taiwan Credit (UCI, 30,000 rows)
-and HMEQ (about 5,960 rows). Each dataset is split once into 80%
-training and 20% test data (stratified, seed 42). Each model is then
-fitted 100 times with `random_state` $=0,\dots,99$ on that split. A
-run’s rule set is the set of rules with non-zero coefficient.
-*Stability* is the number of runs sharing the most frequent rule set;
-Jaccard similarity is averaged over sampled pairs of runs.
+We use German Credit (UCI, 1,000 rows), Taiwan Credit (UCI; a random
+subsample of 5,000 of the 30,000 rows, seed 42, to bound runtime) and
+HMEQ (5,960 rows). Each dataset is split once into 80% training and 20%
+test data (stratified, seed 42). Missing values are imputed (median, or
+mode for categorical columns), categorical columns are ordinally encoded
+and all columns are standardised. All preprocessing statistics are
+fitted on the training split. RuleFit (imodels, 250 trees of depth 4, at
+most 50 rules) is fitted 100 times with `random_state` $=0,\dots,99$.
+<span class="smallcaps">ExpertRuleFit</span> (benchmark settings, solver
+tolerance $10^{-6}$) is fitted three times with `random_state` $=0,1,2$,
+each run in a separate process; since the seed is ignored by design,
+more runs would repeat the same computation, and we instead check that
+the three runs agree bit for bit, comparing a hash of the rule set and
+the SHA-256 digest of the test-set probabilities. A run’s rule set is
+the set of terms with non-zero coefficient; we report how many RuleFit
+runs share the most frequent rule set and the Jaccard similarity
+averaged over all pairs of runs. All runs use the pinned software stack
+(Python 3.11.18, scikit-learn 1.7.2, NumPy 2.4.6, imodels 3.0.4,
+single-threaded), in the container published with the code. An earlier
+version of this table fitted the preprocessing on the full dataset
+before the split and used an unpinned stack.
 
 <div id="tab:results">
 
-|                    | Identical rule sets (of 100) |                                              | Test AUC |                                              |
-|:-------------------|:----------------------------:|:--------------------------------------------:|:--------:|:--------------------------------------------:|
-| 2-3(lr)4-5 Dataset |           RuleFit            | <span class="smallcaps">ExpertRuleFit</span> | RuleFit  | <span class="smallcaps">ExpertRuleFit</span> |
-| German Credit      |              1               |                     100                      |  0.788   |                    0.801                     |
-| Taiwan Credit      |              1               |                     100                      |  0.764   |                    0.763                     |
-| HMEQ               |              1               |                     100                      |  0.903   |                    0.903                     |
+|                    | Runs with the most frequent rule set |                                              |          Test AUC          |                                              |
+|:-------------------|:------------------------------------:|:--------------------------------------------:|:--------------------------:|:--------------------------------------------:|
+| 2-3(lr)4-5 Dataset |               RuleFit                | <span class="smallcaps">ExpertRuleFit</span> |          RuleFit           | <span class="smallcaps">ExpertRuleFit</span> |
+| German Credit      |                1/100                 |                     3/3                      | 0.788 ($\pm$<!-- -->0.009) |                    0.790                     |
+| Taiwan Credit      |                1/100                 |                     3/3                      | 0.764 ($\pm$<!-- -->0.003) |                    0.769                     |
+| HMEQ               |                1/100                 |                     3/3                      | 0.903 ($\pm$<!-- -->0.003) |                    0.903                     |
 
-Seed sensitivity and discrimination (single train/test split, 100
-seeds).
+Seed sensitivity and discrimination (single train/test split). RuleFit:
+100 seeds; AUC is the mean over seeds.
+<span class="smallcaps">ExpertRuleFit</span>: three runs with
+bitwise-identical output.
 
 </div>
 
-Mean pairwise Jaccard similarity is about 0.05 for RuleFit and 1.000 for
-<span class="smallcaps">ExpertRuleFit</span>; the standard deviation of
-<span class="smallcaps">ExpertRuleFit</span>’s AUC across runs is 0.
+Mean pairwise Jaccard similarity of RuleFit rule sets is 0.045 (German
+Credit), 0.058 (Taiwan Credit), 0.036 (HMEQ); on each dataset the 100
+RuleFit runs produced 100 distinct rule sets. The three
+<span class="smallcaps">ExpertRuleFit</span> runs per dataset produced
+the same rule set (43, 42, 48 terms) and the same probabilities. One
+<span class="smallcaps">ExpertRuleFit</span> fit took between about 10
+minutes (German Credit) and 3.5 hours (HMEQ) single-threaded, against
+seconds for RuleFit.
 
 #### What the results show.
 
@@ -216,10 +251,33 @@ without loss of discrimination on these datasets.
 #### What they do not show.
 
 Because <span class="smallcaps">ExpertRuleFit</span> ignores
-`random_state`, varying it does not change the computation: the 100/100
-result follows from the design and is not an empirical finding about
-stability. The comparison sets determinism against seed sensitivity. AUC
-is also reported on a single split without confidence intervals.
+`random_state`, varying it does not change the computation: identical
+output across runs follows from the design and is not an empirical
+finding about stability; the three runs only confirm that the
+implementation is deterministic within the execution envelope. The
+comparison sets determinism against seed sensitivity. AUC is also
+reported on a single split without confidence intervals.
+
+#### Penalty-weight sensitivity (German Credit).
+
+We fitted <span class="smallcaps">ExpertRuleFit</span> on the same split
+for $w_c\in\{10^{-8},10^{-6},10^{-4},10^{-2},1\}$ and
+$w_o\in\{0.1,0.3,1\}$ on the pinned software stack. The expert rules are
+standard credit-risk criteria chosen by the author, not rules supplied
+by domain experts: a confirmatory rule “checking account below 0 DM” and
+an optional rule “duration above 24 months”, both expected to raise the
+default probability. Saga raised 360–361 convergence warnings per fit at
+$w_c=10^{-8}$, 66–69 at $10^{-6}$, 3–6 at $10^{-4}$ and none at
+$10^{-2}$ or $1$. Test AUC was 0.753–0.756 at $w_c=10^{-8}$ and
+0.784–0.797 for all larger values, and fits at $10^{-2}$ took about a
+third of the time of fits at $10^{-4}$. The confirmatory coefficient had
+the expected positive sign only at $w_c\le 10^{-6}$, in fits that had
+not converged; this agreement is an artefact of non-convergence. In
+every converged fit the coefficient was negative: the model also retains
+the ordinal checking-status variable and tree rules containing the same
+condition, which carry the effect, and the sign check flags the
+contradiction. The optional rule was retained in every fit. These
+results cover one dataset and one split.
 
 #### Proposed perturbation protocol.
 
@@ -240,9 +298,13 @@ regression as baselines. These results are not yet available.
 - **No sign constraint.** A confirmatory rule is guaranteed to stay in
   the model, not to keep the direction the expert intended. A declared
   expected sign is checked and a contradiction is flagged, but the
-  coefficient is not constrained.
+  coefficient is not constrained. On German Credit the contradiction
+  occurred in every converged fit
+  (Section <a href="#sec:exp" data-reference-type="ref"
+  data-reference="sec:exp">5</a>); a sign-constrained, unpenalised
+  confirmatory block is the next planned change.
 
-- **Unpenalised rules can absorb signal.** With $w_c=10^{-8}$, a
+- **Weakly penalised rules can absorb signal.** With a small $w_c$, a
   confirmatory rule correlated with tree rules can take their weight; a
   weak or wrong expert rule then shapes the model. The diagnostics
   report this case; they do not correct it.

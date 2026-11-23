@@ -163,7 +163,7 @@ def summarize(out, datasets, n_rf, n_erf):
     env = {"expertrulefit": f"{erf_version} ({Path(expertrulefit.__file__).parent})",
            "python": platform.python_version(), "numpy": np.__version__,
            "scikit-learn": sklearn.__version__,
-           "imodels": getattr(imodels, "__version__", "unknown"),
+           "imodels": __import__("importlib.metadata").metadata.version("imodels"),
            "platform": platform.platform()}
     (out / "table1.json").write_text(json.dumps({"environment": env, "rows": rows}, indent=1))
 

@@ -3,9 +3,10 @@
 ## Allowed now (supported by the code and the 100-seed benchmark)
 - Identical rules and predictions on every run within the execution envelope (determinism, by design).
 - Standard RuleFit returns the same rule set in 1 run out of 100 across seeds.
-- Test AUC within 0.013 of RuleFit on three credit datasets (single split).
+- Test AUC within 0.005 of RuleFit's mean on three credit datasets (single split; Table 1 rerun 23/11/2026 on the pinned stack, preprocessing on the training split). The earlier figure, 0.013, came from the pre-fix protocol: retire it.
+- RuleFit returned a different rule set for each of 100 seeds on all three datasets; ExpertRuleFit returned identical rules and probabilities in 3 of 3 runs (hash-checked).
 - Confirmatory rules are always included in the final model.
-- 39 automated tests; open source.
+- 66 automated tests (pinned stack, 23/11/2026); open source. Public texts still saying "39 tests" are out of date but not wrong at the time written.
 
 ## Not allowed until Phase B/C results exist
 - "Stable" or "stability" without the qualifier "across seeds".

@@ -25,19 +25,18 @@ Guaranteed reproducible within a deterministic execution envelope: **pinned depe
 
 ## Validation Results
 
-Benchmarked on **3 credit scoring datasets** with **100 random seeds** each:
+Seed sensitivity on **3 credit-scoring datasets** (one stratified 80/20 split, preprocessing fitted on the training split; pinned stack in [`docker/`](docker/): Python 3.11, scikit-learn 1.7.2, imodels 3.0.4). RuleFit is fitted with 100 seeds. ExpertRuleFit ignores the seed by design, so it is run 3 times in separate processes and checked for bitwise-identical output (rule-set hash and SHA-256 of test probabilities).
 
-| Dataset | RuleFit Stability | ExpertRuleFit Stability | RuleFit AUC | ExpertRuleFit AUC |
+| Dataset | RuleFit: runs with the most frequent rule set | ExpertRuleFit: identical runs | RuleFit AUC (mean ± sd over seeds) | ExpertRuleFit AUC |
 |---------|:---:|:---:|:---:|:---:|
-| German Credit (UCI) | 1/100 | **100/100** | 0.788 | 0.801 |
-| Taiwan Credit (UCI) | 1/100 | **100/100** | 0.764 | 0.763 |
-| HMEQ | 1/100 | **100/100** | 0.903 | 0.903 |
+| German Credit (UCI) | 1/100 | **3/3** | 0.788 ± 0.009 | 0.790 |
+| Taiwan Credit (UCI, 5,000-row subsample) | 1/100 | **3/3** | 0.764 ± 0.003 | 0.769 |
+| HMEQ | 1/100 | **3/3** | 0.903 ± 0.003 | 0.903 |
 
-**Key metrics:**
-- ExpertRuleFit: **100/100 stability**, Jaccard similarity **1.000**, AUC std **0.0000**
-- Standard RuleFit: **1/100 stability**, Jaccard similarity ~0.05, AUC std ~0.005
-
-> ExpertRuleFit matches RuleFit's predictive performance while guaranteeing perfect reproducibility.
+- Standard RuleFit returned a different rule set for every seed (100 distinct sets per dataset); mean pairwise Jaccard 0.036–0.058.
+- ExpertRuleFit returned the same rules and the same probabilities in every run, with test AUC within 0.005 of RuleFit's mean.
+- This measures **determinism**, which holds by construction, not stability when the training data change (that is the B1 study in [`experiments/`](experiments/)).
+- Reproduce: `python experiments/fetch_data.py`, then `experiments/table1.py` in the `docker/` image. Results: [`experiments/results/table1/`](experiments/results/table1/). One ExpertRuleFit fit took 10 min (German) to 3.5 h (HMEQ) single-threaded.
 
 ## Quick Start
 
