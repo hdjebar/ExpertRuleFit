@@ -1,10 +1,11 @@
 # Results appendix (cited by the technical note)
 
-All results come from the pinned `docker/` image (Python 3.11.18, scikit-learn 1.7.2, NumPy 2.4.6, imodels 3.0.4), single-threaded, on one x86-64 machine. Each ExpertRuleFit configuration was run 3 times in separate processes with identical SHA-256 fingerprints, unless stated otherwise. Expert rules are standard credit-risk criteria chosen by the author.
+Results labelled C3/B2/A6/B3 were produced with ExpertRuleFit 0.7.0 code (bootstrap resampling, filter on, refit by default); Table 1 (0.8.0) and B1 with 0.8.0 code. All results come from the pinned `docker/` image (Python 3.11.18, scikit-learn 1.7.2, NumPy 2.4.6, imodels 3.0.4), single-threaded, on one x86-64 machine. Each ExpertRuleFit configuration was run 3 times in separate processes with identical SHA-256 fingerprints, unless stated otherwise. Expert rules are standard credit-risk criteria chosen by the author.
 
 | Item | What | Files | Command |
 |---|---|---|---|
-| Table 1 | Seed sensitivity, 3 datasets (RuleFit × 100 seeds, ExpertRuleFit × 3 runs) | `table1/` | `python experiments/table1.py --jobs 2` |
+| Table 1 (0.8.0) | Seed sensitivity, 3 datasets, library defaults (RuleFit × 100 seeds reused from `table1/`, ExpertRuleFit × 3 runs) | `table1_v080/` (filter-on intermediate run: `table1_v080_filter/`; 0.7.0: `table1/`) | `python experiments/table1.py --out experiments/results/table1_v080` |
+| B1 | Stability under 25 stratified 90 % subsamples, German Credit: fixed-seed RuleFit vs ExpertRuleFit with and without the filter | `b1/german.md`, `b1/german_summary.json` | `python experiments/b1_stability.py --dataset german` |
 | B3 | Penalty-weight grid w_c × w_o, German Credit | `sensitivity/` | `python experiments/sensitivity.py --datasets german` |
 | C3 | Refit vs constrained confirmatory block, German Credit | `ablation/german.md` (rows erf_refit, erf_constrained*) | `python experiments/ablation.py` |
 | B2 + C1 | Ablation with fixed-seed RuleFit and EBM baselines, German Credit | `ablation/german.md`, `ablation/german_summary.json` | `python experiments/ablation.py` |
@@ -66,3 +67,21 @@ Run each command inside the image: `docker run --rm --network none -v "$PWD":/wo
 | HMEQ | 1/100 | 100 | 0.036 | 3/3 | 0.903 ± 0.003 | 0.903 | 48 |
 
 Environment: expertrulefit 0.7.0 (/work/expertrulefit), python 3.11.18, numpy 2.4.6, scikit-learn 1.7.2, imodels 3.0.4, platform Linux-6.18.44-fc-v726-x86_64-with-glibc2.41
+
+## B1 — German Credit (0.8.0 code)
+
+| Arm | Fits | Jaccard (sd) | Dice | Semantic (sd) | Pred. SD | Ambiguity | Discrepancy | AUC mean (sd) | AUC full | Rules + linear | Fit s |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| rulefit_fixed_seed | 25 | 0.014 (0.006) | 0.028 | 0.530 (0.035) | 0.0563 | 0.210 | 0.095 | 0.785 (0.011) | 0.803 | 43.8 + 1.8 | 3 |
+| erf_default | 25 | 0.003 (0.006) | 0.005 | 0.414 (0.076) | 0.0872 | 0.395 | 0.145 | 0.775 (0.016) | 0.770 | 29.0 + 1.1 | 190 |
+| erf_no_filter | 25 | 0.025 (0.025) | 0.048 | 0.527 (0.041) | 0.0792 | 0.375 | 0.130 | 0.784 (0.013) | 0.791 | 41.5 + 6.5 | 24 |
+
+## Table 1 — 0.8.0 defaults
+
+| Dataset | RuleFit: identical rule sets | RuleFit: distinct sets | RuleFit: mean Jaccard | ERF: identical runs | RuleFit AUC (mean ± sd) | ERF AUC | ERF rules |
+|---|---|---|---|---|---|---|---|
+| German Credit | 1/100 | 100 | 0.045 | 3/3 | 0.788 ± 0.009 | 0.794 | 51 |
+| Taiwan Credit | 1/100 | 100 | 0.058 | 3/3 | 0.764 ± 0.003 | 0.757 | 28 |
+| HMEQ | 1/100 | 100 | 0.036 | 3/3 | 0.903 ± 0.003 | 0.902 | 37 |
+
+Environment: expertrulefit 0.8.0 (/work/expertrulefit), python 3.11.18, numpy 2.4.6, scikit-learn 1.7.2, imodels 3.0.4, platform Linux-6.18.44-fc-v726-x86_64-with-glibc2.41

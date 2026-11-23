@@ -1,11 +1,17 @@
 # Claims policy — what can be said until new results exist
 
+## P0 — prior work (23/11/2026, binding)
+- The confirmatory/optional expert-rule mechanism, its terminology and the penalty exemption for confirmatory rules come from **Expert RuleFit** (Ebner, Nalenz, ten Teije, van Harmelen, Augustin; KR4HC workshop, AIME 2021; R package LuisaEbner/ERF). Any public text that describes "keeping the expert's rules" must say the library builds on Expert RuleFit (Ebner et al.) and must not present that mechanism as our own.
+- Our own contributions, as they may be described: determinism by design with canonical row order; the sign-constrained confirmatory block; diagnostics and SHA-256 fingerprints; the conditioning analysis of penalty weighting by column rescaling.
+- The library name is unchanged pending the author's decision.
+
 ## Allowed now (supported by the code and the 100-seed benchmark)
 - Identical rules and predictions on every run within the execution envelope (determinism, by design).
 - Standard RuleFit returns the same rule set in 1 run out of 100 across seeds.
-- Test AUC within 0.005 of RuleFit's mean on three credit datasets (single split; Table 1 rerun 23/11/2026 on the pinned stack, preprocessing on the training split). The earlier figure, 0.013, came from the pre-fix protocol: retire it.
+- Test AUC versus RuleFit: use only the figure from the 0.8.0 Table 1 (`experiments/results/table1_v080/`, see FINDINGS §16). The 0.7.0 figure (0.005) and the pre-fix figure (0.013) are retired.
 - RuleFit returned a different rule set for each of 100 seeds on all three datasets; ExpertRuleFit returned identical rules and probabilities in 3 of 3 runs (hash-checked).
-- Confirmatory rules are always included in the final model.
+- Confirmatory rules are always kept in the model. A rule without a declared sign gets a non-zero coefficient unless degenerate. In constrained mode (default since 0.8.0), a rule whose declared sign the data contradict is held at zero and flagged; it is then not "included" under Definition 1.
+- **Allowed for constrained mode only (decided 23/11/2026):** "respects the sign declared by the expert; when the data contradict it, the coefficient is held at zero and flagged." 
 - 66 automated tests (pinned stack, 23/11/2026); open source. Public texts still saying "39 tests" are out of date but not wrong at the time written.
 
 ## Not allowed until Phase B/C results exist
@@ -13,7 +19,7 @@
 - "Stable under data changes / retraining".
 - "Calibrated probabilities" (README currently says this — change to "logistic probabilities; optional post-hoc calibration").
 - "Production-ready", "guaranteed reproducibility" without the execution envelope.
-- "Respects expert intent" (no sign constraint yet).
+- "Respects expert intent" in general; only the constrained-mode wording above is allowed, and never for refit mode.
 - Any claim on tax data or audit performance.
 
 ## Public wordings currently in use (keep consistent)
@@ -22,6 +28,8 @@
 - **Interview line (FR):** « Le déterminisme est garanti par conception ; la stabilité quand on rééchantillonne les données est l'expérience suivante, et je l'ai décrite dans la note technique. »
 
 If Phase B shows good perturbation stability, update the CV line only after the results are committed to the repo.
+
+**Action for the author (P0):** the CV and cover-letter lines above describe keeping the expert's rules without crediting Expert RuleFit. Before the next submission, add a credit (e.g. « en s'appuyant sur Expert RuleFit, Ebner et al. 2021 ») or reword around our own contributions (déterminisme, contraintes de signe, empreintes d'audit).
 
 ## About the AI review
 paperreview.ai produced an AI-generated review. Do not present it as peer review or "external review". Accurate phrasing: "I had the method critically reviewed; the main gap is stability under perturbation, and here is the protocol / the results."

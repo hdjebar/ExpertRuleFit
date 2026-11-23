@@ -8,7 +8,8 @@ Protocol, as in ``expertrulefit_validation.py`` except where noted:
   the training split only (the original run fitted it on the full data).
 - RuleFit: imodels ``RuleFitClassifier`` (250 trees, depth 4, at most 50
   rules), ``random_state`` = 0..``--rulefit-seeds``-1.
-- ExpertRuleFit: benchmark settings (tol 1e-6), run ``--erf-runs`` times
+- ExpertRuleFit: library defaults (since 0.8.0; the 0.7.0 table used tol
+  1e-6 via ``--erf-tol 1e-6``), run ``--erf-runs`` times
   with ``random_state`` = 0, 1, 2, ... (ignored by design), each in its own
   process. The script fails unless every run gives the same rule-set hash
   and the same SHA-256 of the test-set probabilities.
@@ -93,9 +94,10 @@ def run_fit(task):
         m.fit(X_tr, y_tr, feature_names=names)
         rules = v.extract_rulefit_rules(m)
     else:
-        m = v.ExpertRuleFitClassifier(n_estimators=250, tree_size=4, max_rules=50,
-                                      random_state=seed, n_bootstrap=10,
-                                      rule_threshold=0.8, tol=1e-6)
+        from expertrulefit import ExpertRuleFit
+
+        kw = {} if task.get("erf_tol") is None else {"tol": task["erf_tol"]}
+        m = ExpertRuleFit(random_state=seed, **kw)      # library defaults
         m.fit(X_tr, y_tr, feature_names=names)
         rules = v.extract_expert_rules(m)
     fit_s = time.perf_counter() - t0
@@ -195,6 +197,9 @@ def main():
     ap.add_argument("--rulefit-seeds", type=int, default=100)
     ap.add_argument("--erf-runs", type=int, default=3)
     ap.add_argument("--jobs", type=int, default=1)
+    ap.add_argument("--erf-tol", type=float, default=None,
+                    help="ExpertRuleFit tol; default: library default (1e-4). "
+                         "The 0.7.0 table used 1e-6.")
     ap.add_argument("--data-dir", default=str(HERE / "data"))
     ap.add_argument("--out", default=str(HERE / "results" / "table1"))
     ap.add_argument("--summarize-only", action="store_true")
@@ -204,7 +209,8 @@ def main():
 
     if not args.summarize_only:
         done = {(f["dataset"], f["model"], f["seed"]) for f in load_fits(out / "fits.jsonl")}
-        tasks = [{"dataset": d, "model": "erf", "seed": s, "data_dir": args.data_dir}
+        tasks = [{"dataset": d, "model": "erf", "seed": s, "data_dir": args.data_dir,
+                  "erf_tol": args.erf_tol}
                  for d in args.datasets for s in range(args.erf_runs)]
         tasks += [{"dataset": d, "model": "rulefit", "seed": s, "data_dir": args.data_dir}
                   for d in args.datasets for s in range(args.rulefit_seeds)]
