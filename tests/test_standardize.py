@@ -1,4 +1,4 @@
-"""Tests for internal column standardisation and the 1e-4 confirmatory default."""
+"""Tests for internal column standardisation and the 1e-2 confirmatory default."""
 
 import joblib
 import numpy as np
@@ -40,7 +40,7 @@ def fitted(raw_data):
 def test_defaults():
     m = ExpertRuleFit()
     assert m.standardize is True
-    assert m.confirmatory_penalty == 1e-4
+    assert m.confirmatory_penalty == 1e-2
 
 
 def test_statistics_stored(fitted, raw_data):

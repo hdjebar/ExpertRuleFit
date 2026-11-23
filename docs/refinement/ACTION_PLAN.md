@@ -46,6 +46,13 @@ Work on a branch (`refinement/<item>`), one PR per phase, tests green before mer
 
 ## Phase C — baselines and method upgrades (≈ 2–3 days)
 
+Order decided 23/11/2026: C3 first, then C1, C2, C4.
+
+### C3. Sign-constrained, unpenalised confirmatory block (first in Phase C)
+- **Why.** B3 on German Credit (FINDINGS §7): in every fit without convergence warnings, the confirmatory rule's coefficient contradicted the expert's expected sign, because correlated terms carried the effect; the near-zero-weight mechanism (now w_c = 1e-2) neither protects the expert's direction nor avoids rescaling the column. This replaces rescaling by w_c for confirmatory rules (option 3 in FINDINGS §1).
+- **Do.** Fit confirmatory coefficients unpenalised with sign/box constraints from `expected_sign` (e.g. scipy `L-BFGS-B` bounds), elastic-net on the remaining columns via proximal steps, in one deterministic convex program; keep the bootstrap filter for non-confirmatory columns. Report when a bound is active (the data pushes against the expert's sign) instead of silently flipping.
+- **Done when.** Tests for a bound-active case and a free case; B3 German rerun shows no sign contradictions and reports active bounds; determinism tests still pass.
+
 ### C1. SIRUS baseline
 - **Do.** Run SIRUS (R package `sirus`, via `rpy2` or a separate R script reading the same splits) on the B1 protocol. Add FIRE only if a maintained Python implementation exists.
 - **Done when.** SIRUS row in the B1 tables.
@@ -54,9 +61,6 @@ Work on a branch (`refinement/<item>`), one PR per phase, tests green before mer
 - **Why.** R: fixed B = 10 and τ = 0.8 are ad hoc; CPSS gives error control.
 - **Do.** Option `selection="cpss"` with B complementary pairs (default 50), threshold chosen from the Shah–Samworth bound for a target expected number of false selections; deterministic seeds.
 - **Done when.** B1 rerun with CPSS; paper reports both.
-
-### C3. True sign constraints (optional)
-- **Do.** Box-constrained logistic fit for confirmatory rules (e.g. scipy `L-BFGS-B` with bounds on those coefficients, elastic-net on the rest via proximal steps) — only if A2 shows sign flips are frequent.
 
 ### C4. Runtime and cross-machine determinism
 - **Do.** Wall-clock and peak memory vs n, number of candidate rules and B, single-threaded. Run the container on two CPU types and compare output hashes.

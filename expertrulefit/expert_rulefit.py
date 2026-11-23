@@ -21,8 +21,8 @@ Mathematical Foundation — Weighted Feature Scaling:
         L1:  l1 * sqrt(w_j) * |b_j|   (reduced by sqrt(w_j))
         L2:  l2 * w_j * b_j^2          (reduced by w_j)
 
-    With the default w_j = 1e-4 for confirmatory rules, the L1 penalty is
-    reduced by sqrt(1e-4) = 1e-2. The true coefficients are recovered as
+    With the default w_j = 1e-2 for confirmatory rules, the L1 penalty is
+    reduced by sqrt(1e-2) = 0.1. The true coefficients are recovered as
     b_j = b_tilde_j / sqrt(w_j).
 
     Columns are standardised first (``standardize=True``): the solver sees
@@ -375,12 +375,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Minimum frequency (0-1) a rule must be selected across bootstraps
         to be retained. Must be in (0, 1].
 
-    confirmatory_penalty : float, default=1e-4
+    confirmatory_penalty : float, default=1e-2
         Penalty weight for confirmatory rules. Must be > 0. Confirmatory
-        columns are multiplied by 1/sqrt(w) before the solver, so very
-        small values (the former default 1e-8, i.e. a factor 1e4) make
-        saga stop far from the optimum without a ConvergenceWarning; see
-        docs/refinement/notes/FINDINGS_2026-11-22.md. Inclusion does not
+        columns are multiplied by 1/sqrt(w) before the solver, so small
+        values make saga inaccurate: at the former default 1e-8 (a factor
+        1e4) it stops far from the optimum, and below 1e-2 it raised
+        ConvergenceWarnings in the sensitivity study. 1e-2 is the smallest
+        weight that fitted without warnings; see
+        docs/refinement/notes/FINDINGS_2026-11-22.md §1 and §7. Inclusion does not
         depend on this value: confirmatory rules bypass the bootstrap filter
         and a post-hoc refit restores any that the solver zeroes.
 
@@ -479,7 +481,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         random_state=42,
         n_bootstrap=10,
         rule_threshold=0.8,
-        confirmatory_penalty=1e-4,
+        confirmatory_penalty=1e-2,
         optional_penalty=0.3,
         l1_ratios=None,
         tol=1e-4,

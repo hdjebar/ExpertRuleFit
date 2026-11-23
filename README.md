@@ -82,7 +82,7 @@ assert erf.confirmatory_all_active_, "COMPLIANCE FAILURE: confirmatory rule elim
 erf.summary()  # Shows [ACTIVE] status for each confirmatory rule
 ```
 
-**How it works:** Candidate columns are first standardised (`standardize=True`, statistics from the training data, stored for prediction; coefficients are reported on the original scale). Confirmatory rules then get a small penalty weight through feature scaling: we fit on `Z_j / sqrt(w_j)`, which reduces the effective elastic-net penalty on their coefficients (L2 scaled by `w_j`, L1 by `sqrt(w_j)`). The default is `w_c = 1e-4`. Much smaller values (the former default `1e-8`) make one column 10⁴ times larger than the others; the saga solver then stops far from the optimum without warning and can collapse the rest of the model (see [findings](docs/refinement/notes/FINDINGS_2026-11-22.md)). **Important:** A confirmatory coefficient can still be near/at zero if the rule carries no incremental signal, is perfectly collinear, or due to solver tolerances. ExpertRuleFit detects this and performs a post-hoc refit to enforce inclusion.
+**How it works:** Candidate columns are first standardised (`standardize=True`, statistics from the training data, stored for prediction; coefficients are reported on the original scale). Confirmatory rules then get a small penalty weight through feature scaling: we fit on `Z_j / sqrt(w_j)`, which reduces the effective elastic-net penalty on their coefficients (L2 scaled by `w_j`, L1 by `sqrt(w_j)`). The default is `w_c = 1e-2`. Much smaller values (the former default `1e-8`) make one column 10⁴ times larger than the others; the saga solver then stops far from the optimum without warning and can collapse the rest of the model (see [findings](docs/refinement/notes/FINDINGS_2026-11-22.md)). **Important:** A confirmatory coefficient can still be near/at zero if the rule carries no incremental signal, is perfectly collinear, or due to solver tolerances. ExpertRuleFit detects this and performs a post-hoc refit to enforce inclusion.
 
 ### Expected sign and absorption diagnostics
 
@@ -114,11 +114,11 @@ erf.diagnose_confirmatory(X_val, y_val, corr_threshold=0.7)   # recompute on oth
 
 Preliminary sensitivity results (German Credit only, one split, pinned stack; `experiments/results/sensitivity/`):
 
-- **w_c ≥ 1e-2 is the reliable range.** It gave no saga ConvergenceWarnings, test AUC 0.784–0.797, and fits 3× faster than at 1e-4. Below 1e-2, warnings appear (3–6 per fit at the 1e-4 default, hundreds at 1e-8), and coefficients of confirmatory rules are not trustworthy.
+- **w_c ≥ 1e-2 is the reliable range; 1e-2 is the default.** It gave no saga ConvergenceWarnings, test AUC 0.784–0.797, and fits 3× faster than at 1e-4. Below 1e-2, warnings appear (3–6 per fit at 1e-4, hundreds at 1e-8), and coefficients of confirmatory rules are not trustworthy.
 - **Avoid 1e-8** (the pre-0.7 default). Even with standardisation it lowered AUC by about 0.03–0.04 and degraded the Brier score (0.229 vs about 0.16).
 - **Expect sign contradictions** when a confirmatory rule duplicates terms the model already has. "Checking account < 0 DM" got a negative conditional coefficient because the checking-status linear term and generated rules carried the effect. Check `confirmatory_sign_ok_` and `diagnose_confirmatory()`.
 
-The default stays at 1e-4 until the HMEQ and Taiwan runs confirm the range.
+After standardisation, solver conditioning depends on the 1/√w_c ratio rather than on the dataset; the HMEQ and Taiwan runs are confirmation.
 
 ### With EBM-Discovered Interactions (automated pipeline)
 
