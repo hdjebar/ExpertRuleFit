@@ -12,21 +12,22 @@ Handoff folder to continue improving ExpertRuleFit (code + paper) in a new conve
 
 | File | What it is |
 |---|---|
-| `PROMPT_next_session.md` | Paste-ready prompt for the next session |
+| `PROMPT_next_session.md` | First prompt (Phase A) — done |
+| `PROMPT_after_review3.md` | Prompt for the next session after review 3 |
 | `ACTION_PLAN.md` | Prioritised backlog mapped to the review, with effort and acceptance criteria |
 | `notes/CODE_FACTS.md` | Verified facts about the current implementation (defaults, seeds, validation protocol), so nothing has to be re-derived |
 | `notes/CLAIMS_POLICY.md` | What may and may not be claimed in the paper, README and CV until new results exist |
-| `notes/FINDINGS_2026-11-22.md` | Phase A session findings: w_c collapse, fixed test failures, benchmark/paper mismatches, runtime |
 | `notes/REFERENCES_TO_VERIFY.md` | References already cited and those suggested by the reviewer, with verification status |
 | `paper/ExpertRuleFit_paper.tex` | Paper source (current version, 6 pages) — the source of truth |
 | `paper/ExpertRuleFit_paper.pdf` | Compiled version submitted to paperreview.ai |
 | `paper/ExpertRuleFit_paper.md` | Markdown conversion of the paper, for reading or diffing |
-| `review/2026-11-22_paperreview-ai_review.md` | Full AI review received from paperreview.ai (Stanford Agentic Reviewer) |
+| `review/2026-11-22_paperreview-ai_review.md` | Review 1 (paperreview.ai) |
+| `review/2026-11-22_review-2_after-phase-a.md` | Review 2, of the paper after Phase A |
+| `review/2026-11-23_review-3_paper-v2.md` | Review 3, of paper v2 (7 pages) |
 
 ## Status on 22/11/2026
 
 - **Repo:** `main` at commit `76f850f` (23/02/2026). No refinement code written yet.
-- **Branch `refinement/phase-a` (22/11/2026):** A1 and A2 done with tests (57 pass); B1 script ready, not run at scale. Read `notes/FINDINGS_2026-11-22.md` first: the default w_c = 1e-8 can collapse the model.
 - **Paper v1:** reviewed once by paperreview.ai. Verdict in substance: well written, honest about limits, engineering integration of known ideas; needs perturbation stability results, ablations, baselines (SIRUS first), sign constraints, calibration, sensitivity and runtime.
 - **Living version of the note:** Claude Docs doc "ExpertRuleFit: reproducible, expert-constrained rule ensembles — technical note" (in the author's artifacts). The `.tex` in this folder is more recent on calibration and is the reference.
 - **Deep Review (Google):** not yet run.

@@ -30,3 +30,20 @@ Rule: no reference enters the paper until its title, authors, venue and year are
 | COB | orthogonal gradient boosting for fewer, general rules | search; verify |
 | Bayesian stability selection | arXiv:2410.21914 | open arXiv page; verify title/authors |
 | CPSS | Shah & Samworth 2013 (already cited) | — |
+
+## Suggested by review 2 — NOT verified
+| Name | Claim in review | Action |
+|---|---|---|
+| BRL (Bayesian Rule Lists) | combinatorial rule learner | likely Letham et al. 2015; verify |
+| IMLI | MaxSAT-based interpretable rules | likely Ghosh & Meel; verify |
+| gren | group-regularised elastic net with empirical Bayes penalties | likely Münch et al.; verify |
+| COB | orthogonal gradient boosting for compact rules | same as review 1; verify |
+
+## Suggested by review 3 — NOT verified
+| Name | Claim in review | Action |
+|---|---|---|
+| RPTE | "strict source disjointness, auditability-first", audit-load measures | find source; high risk of inaccurate description |
+| RCProb / RuleCOSI+ | efficient rule extraction from ensembles | verify |
+| Node Harvest | rule-based method (likely Meinshausen 2010, AoAS) | verify |
+| MNAM | monotonic neural additive models | verify |
+| HELOC, GMSC | credit datasets (FICO xML challenge; Kaggle Give Me Some Credit) | check licences |

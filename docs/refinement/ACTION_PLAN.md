@@ -46,13 +46,6 @@ Work on a branch (`refinement/<item>`), one PR per phase, tests green before mer
 
 ## Phase C — baselines and method upgrades (≈ 2–3 days)
 
-Order decided 23/11/2026: C3 first, then C1, C2, C4.
-
-### C3. Sign-constrained, unpenalised confirmatory block (first in Phase C)
-- **Why.** B3 on German Credit (FINDINGS §7): in every fit without convergence warnings, the confirmatory rule's coefficient contradicted the expert's expected sign, because correlated terms carried the effect; the near-zero-weight mechanism (now w_c = 1e-2) neither protects the expert's direction nor avoids rescaling the column. This replaces rescaling by w_c for confirmatory rules (option 3 in FINDINGS §1).
-- **Do.** Fit confirmatory coefficients unpenalised with sign/box constraints from `expected_sign` (e.g. scipy `L-BFGS-B` bounds), elastic-net on the remaining columns via proximal steps, in one deterministic convex program; keep the bootstrap filter for non-confirmatory columns. Report when a bound is active (the data pushes against the expert's sign) instead of silently flipping.
-- **Done when.** Tests for a bound-active case and a free case; B3 German rerun shows no sign contradictions and reports active bounds; determinism tests still pass.
-
 ### C1. SIRUS baseline
 - **Do.** Run SIRUS (R package `sirus`, via `rpy2` or a separate R script reading the same splits) on the B1 protocol. Add FIRE only if a maintained Python implementation exists.
 - **Done when.** SIRUS row in the B1 tables.
@@ -61,6 +54,9 @@ Order decided 23/11/2026: C3 first, then C1, C2, C4.
 - **Why.** R: fixed B = 10 and τ = 0.8 are ad hoc; CPSS gives error control.
 - **Do.** Option `selection="cpss"` with B complementary pairs (default 50), threshold chosen from the Shah–Samworth bound for a target expected number of false selections; deterministic seeds.
 - **Done when.** B1 rerun with CPSS; paper reports both.
+
+### C3. True sign constraints (optional)
+- **Do.** Box-constrained logistic fit for confirmatory rules (e.g. scipy `L-BFGS-B` with bounds on those coefficients, elastic-net on the rest via proximal steps) — only if A2 shows sign flips are frequent.
 
 ### C4. Runtime and cross-machine determinism
 - **Do.** Wall-clock and peak memory vs n, number of candidate rules and B, single-threaded. Run the container on two CPU types and compare output hashes.
@@ -75,3 +71,72 @@ Order decided 23/11/2026: C3 first, then C1, C2, C4.
 ## Out of scope for now
 - Regression / multiclass support.
 - Tax-data experiments (no data access); a synthetic selection-bias + IPW experiment is possible later (R suggests it).
+
+---
+
+## Additions from review 2 (22/11/2026, after Phase A)
+
+Review 2 (`review/2026-11-22_review-2_after-phase-a.md`) confirms review 1 and independently flags w_c = 1e-8 as an ill-conditioning risk, which matches the collapse measured in `FINDINGS_2026-11-22.md`. New items:
+
+### A3. Define the confirmatory guarantee precisely (wording + test) — 1 hour
+- **Why.** "Logical inclusion (feature present) or numerical inclusion (β ≠ 0)?" An unpenalised refit can still end with β_c = 0 in degenerate cases.
+- **Do.** State in README and paper: *the rule is kept in the model and not shrunk by the penalty; its coefficient is estimated freely and may be ≈ 0 if the rule carries no signal.* Set `confirmatory_all_active_` from |β| > tol and warn otherwise. True enforcement (β ≥ ε or sign) moves to C3.
+
+### A4. Preprocessing inside the execution envelope — with the w_c fix
+- **Why.** Missing values, categorical encoding and column order are not specified.
+- **Do.** With the internal standardisation (option 2), add a documented, deterministic preprocessing contract: numeric only or a fixed one-hot order, explicit missing-value policy (error by default), schema hash stored in the audit bundle.
+
+### A5. Leakage check for EBM interactions and DualModel — 1–2 hours
+- **Why.** Is the EBM trained only on the training fold inside CV/stacking?
+- **Do.** Read `ebm_bridge.py` and `dual_model.py`; add a test proving out-of-fold use; fix if not.
+
+### A6. Operational re-execution checks — 2 hours
+- **Do.** Row-order invariance test (shuffle rows → same rule set, or documented difference), and SHA-256 hashes of rule set, coefficients and predictions in the audit bundle.
+
+### B-updates
+- **B1:** add *per-instance explanation stability* (overlap of active rules per test case across perturbations); state the resampling scheme (90 % subsampling + bootstrap; justify vs repeated low-fold CV).
+- **B2:** add the baseline **RuleFit with fixed internal seeds** — the key control: it shows whether the frequency filter adds anything beyond fixing seeds.
+- **B3:** also vary B ∈ {10, 25, 50} and τ ∈ {0.6, 0.7, 0.8, 0.9}; vary the rule budget (max_rules 50/100/200, depth 3/4/6) with runtime.
+- **B4:** discuss isotonic calibration's piecewise-constant output under determinism.
+
+### C-updates
+- **C1:** baselines in priority: SIRUS > fixed-seed RuleFit (B2) > L2 logistic > FIRE/LIRE if maintained code exists. BRL, IMLI, COB: related work only, after verification.
+- **C5 (new, optional):** group-regularised penalties (gren-style) instead of fixed w_c / w_o — research direction, not a fix.
+
+### Positioning for paper v2
+Both reviews converge: *strong technical report, practical value, not yet top-tier.* Target an applied ML / model governance venue or workshop; frame determinism as an auditability property, never as robustness or fairness (review 2 explicitly warns against this confusion).
+
+---
+
+## Additions from review 3 (23/11/2026, paper v2)
+
+Review 3 (`review/2026-11-23_review-3_paper-v2.md`) repeats the core asks of reviews 1–2 (perturbation study, SIRUS, sign constraints, ablation, B/τ grid, calibration, runtime). Verdict unchanged: clean engineering recipe, modest novelty, narrow evaluation. New items:
+
+### D1. Argue the value of seed-agnostic determinism over logging seeds — paper, 1 hour
+- **Why.** "Many teams already reproduce by logging seeds, code and data hashes."
+- **Do.** Add a paragraph in §1 or §4: logging a seed makes one run replayable, but the rule set still depends on an arbitrary choice among ~100 different rule sets. That leaves a degree of freedom (seed shopping: picking the seed whose rules look best) that an auditor cannot detect from the log. Seed-agnostic determinism removes it: there is only one model for given data and settings. Also answer "why ignore `random_state` rather than log a canonical seed chain".
+
+### C3 (reworded). Single convex problem for confirmatory rules
+- Formulate as block-penalised logistic regression: λ = 0 on the confirmatory block, elastic net on the rest, sign bounds on the confirmatory coefficients. Write the optimisation problem in the paper; discuss identifiability under collinearity (ridge on the non-confirmatory block). Keep the solver deterministic.
+
+### C1 (extended). Baselines
+- Add **EBM** as a baseline. It is cheap because it is already a dependency.
+- Keep SIRUS as the primary baseline.
+- RPTE, RCProb/RuleCOSI+, Node Harvest and TE2Rules go to related work only after verification (see `notes/REFERENCES_TO_VERIFY.md`).
+
+### B5 (new). Interpretability and runtime metrics
+- Per model: number of active rules, mean rule length, **active rules per test case**, rule overlap/conflict rate.
+- Runtime breakdown: rule extraction / bootstraps / final CV / refit. Try cheap speed-ups that keep determinism: a smaller C grid, warm starts, `lbfgs` for L2-only stages.
+
+### B6 (new, optional). More datasets
+- Add HELOC (FICO) and Give Me Some Credit, or 3–5 OpenML tabular binary tasks, after the speed-ups.
+
+### A7 (new). Promotion checklist for confirmatory rules
+- **Why.** A confirmatory rule could encode a protected characteristic indirectly.
+- **Do.** Add a short checklist in the README or docs: legal basis, provenance, a proxy screen (correlation with protected attributes when available), expected sign and the reviewer. Store it in the rule's metadata or the audit bundle.
+
+### E1 (new, optional). Tax-audit simulation
+- A synthetic task with injected selection bias, showing the full pipeline with inverse-probability weighting. This turns section 7 from a sketch into a demonstration.
+
+### Stop rule for reviews
+Three AI reviews now agree on the same gaps. Further reviews will repeat them until new results exist. Request the next review only after B1 (perturbation), C3 (sign constraints) and the ablation are done.
