@@ -22,7 +22,7 @@
 \maketitle
 
 \begin{abstract}
-Rule ensembles such as RuleFit are readable, but their Lasso-based rule selection is unstable: changing the random seed changes the selected rules, which prevents an auditor from re-executing a model and obtaining the same output. Domain experts also need some rules to remain in the model even when the data signal is weak. We present \textsc{ExpertRuleFit}, a binary classifier that (i) generates candidate rules with a fixed-seed gradient-boosting ensemble, (ii) appends expert rules with reduced penalty weights, (iii) filters rules by their selection frequency across a fixed set of bootstrap elastic-net logistic fits, and (iv) enforces the inclusion of ``confirmatory'' expert rules through a constrained refit. On three public credit-scoring datasets, \textsc{ExpertRuleFit} returns bitwise-identical rule sets and predictions in every run (three runs per dataset, in separate processes), whereas RuleFit returns a different rule set for each of 100 seeds, with test AUC within 0.005 of RuleFit's mean. This benchmark measures \emph{determinism}, which holds by construction, not stability under data perturbation, for which we give a protocol. An optional constrained mode enforces the experts' expected signs and reports when the data contradict them. We also sketch an application to tax-audit prioritisation.
+Rule ensembles such as RuleFit are readable, but their Lasso-based rule selection is unstable: changing the random seed changes the selected rules, which prevents an auditor from re-executing a model and obtaining the same output. Domain experts also need some rules to remain in the model even when the data signal is weak; Expert RuleFit \citep{ebner2021} addresses this with \emph{confirmatory} expert rules exempt from the penalty and \emph{optional} expert rules with a reduced one. We present a Python implementation of this idea built for auditability. Its additions are (i) determinism by design, with internal seeds fixed and the training rows put in a canonical order, (ii) a sign-constrained confirmatory block solved as one convex problem, which holds a coefficient at zero and flags it when the data contradict the expert's sign, (iii) diagnostics and SHA-256 fingerprints for audit, and (iv) an analysis of how penalty weighting by column rescaling degrades solver accuracy. On three public credit-scoring datasets, \textsc{ExpertRuleFit} returns bitwise-identical rule sets and predictions in every run (three runs per dataset, in separate processes), whereas RuleFit returns a different rule set for each of 100 seeds, with test AUC within 0.005 of RuleFit's mean. This benchmark measures \emph{determinism}, which holds by construction, not stability under data perturbation, for which we give a protocol. An optional constrained mode enforces the experts' expected signs and reports when the data contradict them. We also sketch an application to tax-audit prioritisation.
 \end{abstract}
 
 \section{Introduction}
@@ -33,21 +33,26 @@ The selection step is unstable. Candidate rules are strongly correlated, and amo
 
 In regulated settings such as credit, insurance or tax administration this blocks deployment: a supervisor who re-runs the model must obtain the same output; a rule given as the reason for a score should not disappear at retraining for reasons unrelated to the data; and criteria required by regulation or by experts can be removed by the penalty when their signal is weak or collinear with other rules.
 
+Expert RuleFit \citep{ebner2021}, developed at LMU Munich with an R implementation, extends RuleFit with confirmatory expert rules and linear terms that are exempt from penalisation, so that they always enter the model, and optional ones with an adjustable penalty factor. The confirmatory/optional distinction, its terminology and the penalty exemption are theirs; this report uses the same name for a Python implementation and does not claim them.
+
 \paragraph{Contributions.}
 \begin{enumerate}
-  \item An estimator combining RuleFit rule generation, bootstrap selection-frequency filtering and penalty-weighted expert rules, with a constrained refit that enforces the inclusion of confirmatory rules in the sense of Definition~\ref{def:inclusion}: present with a non-zero coefficient, not with a given sign (Section~\ref{sec:method}).
-  \item The reproducibility guarantee stated as determinism within an execution envelope, with its limits (Section~\ref{sec:repro}).
-  \item A benchmark on three credit datasets, an ablation, and a protocol for stability under data perturbation (Section~\ref{sec:exp}).
+  \item \emph{Determinism with canonical row order}: internal seeds are fixed, the user seed is ignored and the training rows are sorted before fitting, so any permutation of the same rows gives the same model; the guarantee is stated as an execution envelope with its limits (Sections~\ref{sec:method}, \ref{sec:repro}).
+  \item \emph{A sign-constrained confirmatory block}: confirmatory coefficients unpenalised and bounded by the expert's expected sign in one convex problem, with confirmatory inclusion defined precisely (Definition~\ref{def:inclusion}) (Section~\ref{sec:method}).
+  \item \emph{Diagnostics and fingerprints}: sign checks, absorption diagnostics and SHA-256 fingerprints of rules, coefficients and predictions in an audit bundle.
+  \item \emph{A conditioning analysis}: penalty weighting by column rescaling makes saga stop far from the optimum without a warning when weights are small; standardisation and the weight choice that avoid it. A benchmark, an ablation and a perturbation study support these points (Section~\ref{sec:exp}).
   \item An open-source implementation built on \texttt{imodels} \citep{singh2021} and \texttt{scikit-learn}, with code, tests, scripts, results and a container recipe at \url{https://github.com/hdjebar/ExpertRuleFit}; datasets are public. Table~\ref{tab:results} was produced with \textsc{ExpertRuleFit} 0.7.0 at commit \texttt{281d5a6}, and the German Credit results of Section~\ref{sec:exp} at commit \texttt{ad21d89}, where default settings reproduce the earlier outputs exactly and 93 automated tests pass. Both ran in a container built from \texttt{python:3.11-slim} (digest \texttt{07d48240\ldots}) with a hash-locked dependency file (SHA-256 \texttt{990ced9d\ldots}).
 \end{enumerate}
 
 \section{Related work}\label{sec:related}
 
+\paragraph{Expert knowledge in rule ensembles.} Expert RuleFit \citep{ebner2021} adds expert rules and linear terms to RuleFit's candidate set, exempts confirmatory ones from the $\ell_1$/elastic-net penalty (penalty factor 0) and gives optional ones a common penalty factor; it is the direct precedent of this work. We keep its confirmatory/optional design and change how it is fitted and audited: deterministic execution with canonical row order, sign bounds on the confirmatory block, an optional selection-frequency filter, and diagnostics.
+
 \paragraph{Stable rule ensembles.} SIRUS \citep{benard2021} obtains stability from the forest structure: splits are discretised on quantiles and the most frequent rules across trees are kept. Two runs on the same data yield nearly the same rule list, and stability under data perturbation is reported. Other methods target sparsity: Compressed Rule Ensembles \citep{nalenz2022} merge similar rules, FIRE \citep{liu2023} uses a fusion penalty favouring shared antecedents, LIRE \citep{kanamori2023} minimises the number of rules needed per prediction, and FIGS \citep{tan2025} grows a small sum of trees. The \texttt{pre} package \citep{fokkema2020} uses relaxed and adaptive Lasso to reduce false selections.
 
 \paragraph{Stability selection.} Retaining variables selected in most subsample fits is the stability selection of \citet{meinshausen2010}, with improved error bounds in \citet{shah2013}. \textsc{ExpertRuleFit} applies the idea to rule ensembles with a fixed threshold and ten draws, without the error control these works provide.
 
-\paragraph{Prior knowledge in penalties.} Reducing the penalty on chosen variables follows the adaptive Lasso \citep{zou2006} and the use of per-feature penalty factors. Monotonicity constraints, common in credit scoring, fix the direction of an effect; \textsc{ExpertRuleFit} enforces inclusion, not direction.
+\paragraph{Prior knowledge in penalties.} Reducing the penalty on chosen variables follows the adaptive Lasso \citep{zou2006} and the use of per-feature penalty factors. Monotonicity and sign constraints, common in credit scoring, fix the direction of an effect; our constrained mode applies such bounds to the confirmatory block only.
 
 \paragraph{Glass-box models and multiplicity.} Explainable Boosting Machines \citep{lou2013,nori2019} fit additive shape functions with pairwise interactions; we use them to propose interaction rules, in a stacked variant and as a baseline. Many models fit the data almost equally well \citep{rudin2024}: RuleFit's instability is a random draw from this Rashomon set, and \textsc{ExpertRuleFit} fixes the draw, which makes the output auditable but does not make it better than its neighbours.
 
@@ -59,11 +64,12 @@ In regulated settings such as credit, insurance or tax administration this block
 \toprule
 Method & Rule ensemble & Stable under perturbation & Deterministic re-run & Expert rules protected\\
 \midrule
-RuleFit & yes & no & only if all seeds fixed & no\\
-SIRUS & yes & yes (reported) & near-identical & no\\
-CRE, FIRE, LIRE & yes & not the main goal & solver-dependent & no\\
+RuleFit & yes & no & if the user fixes and logs all seeds & no\\
+Expert RuleFit \citep{ebner2021} & yes & not measured & not stated & yes, penalty factor 0\\
+SIRUS & yes & yes (reported) & near-identical across seeds; identical if fixed & no\\
+CRE, FIRE, LIRE & yes & not the main goal & if seeds fixed & no\\
 Stability selection & no & yes, with bounds & with fixed subsamples & no\\
-\textsc{ExpertRuleFit} & yes & not yet measured & yes, by design & inclusion, not sign\\
+This work & yes & see Section~\ref{sec:exp} & seeds locked, rows canonicalised & inclusion; sign bounded\\
 \bottomrule
 \end{tabular}}
 \end{table}
@@ -188,6 +194,7 @@ Three conditions precede any pilot: \emph{selection bias} (outcomes exist only f
 
 \begin{thebibliography}{99}\small
 \bibitem[B{\'e}nard et~al.(2021)]{benard2021} B{\'e}nard, C., Biau, G., da~Veiga, S. and Scornet, E. (2021). SIRUS: Stable and interpretable RUle set for classification. \emph{Electronic Journal of Statistics}, 15(1), 427--505.
+\bibitem[Ebner et~al.(2021)]{ebner2021} Ebner, L., Nalenz, M., ten Teije, A., van Harmelen, F. and Augustin, T. (2021). Expert RuleFit: Complementing rule ensembles with expert knowledge. KR4HC Workshop, 19th International Conference on Artificial Intelligence in Medicine (AIME 2021). R implementation: \url{https://github.com/LuisaEbner/ERF}.
 \bibitem[Fokkema(2020)]{fokkema2020} Fokkema, M. (2020). Fitting prediction rule ensembles with R package pre. \emph{Journal of Statistical Software}, 92(12).
 \bibitem[Friedman and Popescu(2008)]{friedman2008} Friedman, J.~H. and Popescu, B.~E. (2008). Predictive learning via rule ensembles. \emph{Annals of Applied Statistics}, 2(3), 916--954.
 \bibitem[Kanamori(2023)]{kanamori2023} Kanamori, K. (2023). Learning locally interpretable rule ensemble. In \emph{ECML PKDD}.

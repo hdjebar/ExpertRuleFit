@@ -1,5 +1,22 @@
 # ExpertRuleFit
 
+## Prior work and attribution
+
+**Expert RuleFit already exists, and the core idea of this library is theirs.** *Expert RuleFit* (ERF) was introduced by **Luisa Ebner, Malte Nalenz, Annette ten Teije, Frank van Harmelen and Thomas Augustin**: "Expert RuleFit: Complementing Rule Ensembles with Expert Knowledge", KR4HC Workshop at the 19th International Conference on Artificial Intelligence in Medicine (AIME), 2021. The method started as Luisa Ebner's master's thesis at LMU Munich, and an R implementation is at [github.com/LuisaEbner/ERF](https://github.com/LuisaEbner/ERF). It extends RuleFit (Friedman & Popescu 2008) with expert knowledge in two groups:
+
+- **confirmatory** expert rules and linear terms, exempt from penalisation, so they always enter the final model;
+- **optional** expert rules and linear terms, with an adjustable penalty factor (adaptive regularisation).
+
+The *confirmatory / optional* terminology, the idea of exempting confirmatory rules from the penalty, and the adaptive penalty for optional rules all come from that work, and this library uses the same name; whether to rename it is still open.
+
+**What this library adds** to Expert RuleFit:
+
+1. **Determinism by design**: internal seeds fixed and the user seed ignored, canonical row order (since 0.8.0, any permutation of the training rows gives the same model), a pinned container recipe, and an explicit execution envelope.
+2. **A sign-constrained confirmatory block** (`confirmatory_mode="constrained"`, the default since 0.8.0): one convex problem with confirmatory coefficients unpenalised and bounded by the expert's expected sign. When the data contradict the sign, the coefficient is held at zero and flagged.
+3. **Diagnostics and fingerprints**: sign checks, absorption diagnostics (correlated rules a confirmatory rule displaces), and SHA-256 fingerprints of rules, coefficients and predictions in an audit bundle.
+4. **A conditioning analysis** of penalty weighting by column rescaling: very small weights make saga stop far from the optimum without a warning; standardisation and the weight choice that avoid it.
+5. Also: an optional bootstrap/subsample selection-frequency filter, data-driven interaction rules from EBM (optional, never confirmatory by default), and a stacked EBM + rules model.
+
 **Reproducible interpretable ML for regulated banking environments — EBM-grounded rules that survive any regularization.**
 
 ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility, plus **confirmatory rules** that survive any regularization strength. Integrates with [InterpretML](https://github.com/interpretml/interpret) Explainable Boosting Machines (EBM) to auto-discover interaction rules grounded in shape functions. Built for banking compliance under CSSF/EU AI Act.
