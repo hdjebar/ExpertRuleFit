@@ -119,6 +119,20 @@ Preliminary sensitivity results (German Credit only, one split, pinned stack; `e
 
 After standardisation, solver conditioning depends on the 1/√w_c ratio rather than on the dataset; the HMEQ and Taiwan runs are confirmation.
 
+### Sign-constrained confirmatory rules (`confirmatory_mode="constrained"`)
+
+By default (`"refit"`), a confirmatory rule is kept in the model but its sign is only checked. With `confirmatory_mode="constrained"`, the final model is one convex problem: confirmatory coefficients are **unpenalised** and bounded by their `expected_sign` (≥ 0 for +1, ≤ 0 for −1), the other columns keep the elastic net chosen by cross-validation, and optional rules keep their penalty factor. A deterministic proximal-gradient solver (FISTA) solves it.
+
+```python
+erf = ExpertRuleFit(confirmatory_mode="constrained")      # or constrained_penalty="ridge"
+erf.fit(X_train, y_train, feature_names=fn, confirmatory_rules=confirmatory)
+erf.confirmatory_status_[0]["bound_active"]   # True: held at 0 because, given the other
+                                              # terms, the data push against the expert's sign
+erf.constrained_info_                         # C, l1_ratio, iterations, KKT residual, bounds
+```
+
+A bound-active rule is reported, not hidden: its coefficient is 0, so it is not *included* in the sense of the paper's Definition 1, and a warning names it. `constrained_penalty="ridge"` makes the problem strictly convex (unique solution) even when generated rules duplicate a confirmatory rule. `"refit"` stays the default for now.
+
 ### Re-execution checks
 
 - `erf.fingerprint(X_test)` returns SHA-256 hashes of the active rule set, of the intercept and coefficients, and of the predicted probabilities on `X_test`. `audit_bundle(X_reference=X_test)` includes them. Two runs are the same model if, and only if, the fingerprints match.

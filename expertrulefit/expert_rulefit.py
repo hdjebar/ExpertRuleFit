@@ -402,6 +402,32 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Number of CPU cores for cross-validation. ``None`` means 1 core.
         Use ``-1`` for all cores (caution on shared infrastructure).
 
+    confirmatory_mode : {"refit", "constrained", "none"}, default="refit"
+        How the final model treats confirmatory rules. (``"none"`` skips
+        both the refit and the constrained solve; for ablation studies.)
+
+        - ``"refit"``: final elastic-net fit with confirmatory columns
+          down-weighted by ``confirmatory_penalty``; if one ends at zero,
+          refit all stable columns unpenalised.
+        - ``"constrained"``: after the same CV has chosen C and l1_ratio,
+          solve one convex problem on the stable columns: confirmatory
+          coefficients unpenalised and bounded by ``expected_sign``
+          (>= 0 for +1, <= 0 for -1), elastic net on the other columns
+          with exact per-column factors (``optional_penalty`` for optional
+          rules). Deterministic FISTA solver (see ``constrained.py``). A
+          confirmatory coefficient held at 0 by its bound is reported as
+          ``bound_active`` (the data push against the expert's sign).
+
+    selection : {"bootstrap", "none"}, default="bootstrap"
+        ``"none"`` skips the bootstrap frequency filter: every candidate
+        column goes to the final elastic-net fit. For ablation studies.
+
+    constrained_penalty : {"elasticnet", "ridge"}, default="elasticnet"
+        Penalty on non-confirmatory columns in ``"constrained"`` mode.
+        ``"ridge"`` makes the problem strictly convex when the confirmatory
+        columns and the intercept have full rank, so the solution is unique
+        even when generated rules duplicate a confirmatory rule.
+
     row_order : {"as_given", "canonical"}, default="as_given"
         ``"canonical"`` sorts the training rows (lexicographically by the
         feature values, then the label) before fitting, so any permutation
@@ -499,6 +525,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         thread_limit=1,
         standardize=True,
         row_order="as_given",
+        confirmatory_mode="refit",
+        constrained_penalty="elasticnet",
+        selection="bootstrap",
     ):
         self.n_estimators = n_estimators
         self.tree_size = tree_size
@@ -516,6 +545,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.thread_limit = thread_limit
         self.standardize = standardize
         self.row_order = row_order
+        self.confirmatory_mode = confirmatory_mode
+        self.constrained_penalty = constrained_penalty
+        self.selection = selection
 
     # ------------------------------------------------------------------
     # Validation
@@ -645,6 +677,24 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.optional_rules_ = optional_rules
 
         self._validate_inputs(X, y)
+        if self.selection not in ("bootstrap", "none"):
+            raise ValueError(
+                f"selection must be 'bootstrap' or 'none', got {self.selection!r}"
+            )
+        if self.confirmatory_mode not in ("refit", "constrained", "none"):
+            raise ValueError(
+                "confirmatory_mode must be 'refit', 'constrained' or 'none', "
+                f"got {self.confirmatory_mode!r}"
+            )
+        if self.constrained_penalty not in ("elasticnet", "ridge"):
+            raise ValueError(
+                "constrained_penalty must be 'elasticnet' or 'ridge', "
+                f"got {self.constrained_penalty!r}"
+            )
+        if self.confirmatory_mode == "constrained" and self.calibration is not None:
+            raise ValueError(
+                "calibration is not supported with confirmatory_mode='constrained'"
+            )
         if self.row_order not in ("as_given", "canonical"):
             raise ValueError(
                 f"row_order must be 'as_given' or 'canonical', got {self.row_order!r}"
@@ -672,6 +722,16 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         thread_limit = self.thread_limit if self.deterministic else None
 
         with threadpool_limits(limits=thread_limit):
+            import time as _time
+            _t = _time.perf_counter()
+            self.timings_ = {}
+
+            def _lap(stage):
+                nonlocal _t
+                now = _time.perf_counter()
+                self.timings_[stage] = round(now - _t, 3)
+                _t = now
+
             # === Step 1: Fit base RuleFit with FIXED seed ===
             logger.info("Step 1: Fitting base RuleFit (seed=%d)", self._BASE_SEED)
             self.base_rulefit_ = RuleFitClassifier(
@@ -741,6 +801,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             self.col_center_ = col_center
             self.col_sd_ = col_sd
 
+            _lap("rule_generation")
             # === Step 4: Bootstrap stabilization ===
             logger.info(
                 "Step 4: Bootstrap stabilization (%d iterations, "
@@ -748,13 +809,16 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 self.n_bootstrap, bootstrap_n_jobs, inner_n_jobs,
             )
 
-            results = Parallel(n_jobs=bootstrap_n_jobs)(
-                delayed(_bootstrap_iteration)(
-                    b, X_all, y, col_center, col_scale,
-                    self._BASE_SEED, self.l1_ratios, self.tol, inner_n_jobs,
+            if self.selection == "none":
+                results = [np.ones(n_total_features, dtype=int)]
+            else:
+                results = Parallel(n_jobs=bootstrap_n_jobs)(
+                    delayed(_bootstrap_iteration)(
+                        b, X_all, y, col_center, col_scale,
+                        self._BASE_SEED, self.l1_ratios, self.tol, inner_n_jobs,
+                    )
+                    for b in range(self.n_bootstrap)
                 )
-                for b in range(self.n_bootstrap)
-            )
 
             # Filter out failed iterations (returned as None)
             successful = [r for r in results if r is not None]
@@ -768,13 +832,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             rule_selection_count = np.sum(successful, axis=0)
 
-            if n_successful_boots < self.n_bootstrap:
+            if self.selection == "bootstrap" and n_successful_boots < self.n_bootstrap:
                 warnings.warn(
                     f"Only {n_successful_boots}/{self.n_bootstrap} bootstrap "
                     f"iterations succeeded. Stability estimates may be "
                     f"unreliable."
                 )
 
+            _lap("bootstrap")
             # === Step 5: Frequency-based filtering ===
             self.bootstrap_frequencies_ = (
                 rule_selection_count / n_successful_boots
@@ -825,10 +890,17 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             self.n_auto_features_ = n_auto_features
             self.n_expert_ = n_expert
 
+            _lap("final_cv")
+            # === Step 6b (constrained mode): one convex solve ===
+            self.constrained_info_ = None
+            if self.confirmatory_mode == "constrained":
+                self._fit_constrained(X_all, y, col_center, col_sd)
+
             # === Step 7: Verify + enforce confirmatory rules ===
             self._verify_confirmatory()
 
-            if not self.confirmatory_all_active_ and confirmatory_rules:
+            if (self.confirmatory_mode == "refit"
+                    and not self.confirmatory_all_active_ and confirmatory_rules):
                 warnings.warn(
                     "Some confirmatory rules were zeroed by the solver. "
                     "Executing post-hoc constrained refit to enforce "
@@ -845,6 +917,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                         "data for these rules."
                     )
 
+            _lap("refit_or_constrained")
             # === Step 7b: Sign check + absorption diagnostics ===
             self._warn_sign_violations()
             self.confirmatory_diagnostics_ = (
@@ -852,6 +925,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 if confirmatory_rules else []
             )
 
+            _lap("diagnostics")
             # === Step 8 (optional): Post-hoc probability calibration ===
             self.calibrator_ = None
             if self.calibration is not None:
@@ -879,6 +953,61 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     # ------------------------------------------------------------------
     # Post-hoc confirmatory enforcement
     # ------------------------------------------------------------------
+
+    def _fit_constrained(self, X_all, y, col_center, col_sd):
+        """Replace the final model by the block-penalised, sign-bounded solve."""
+        from .constrained import LinearLogit, solve_block_logistic
+
+        C, l1 = self._final_hyperparams()
+        stable_idx = np.where(self.stable_mask_)[0]
+        center = col_center[stable_idx]
+        scale = 1.0 / col_sd[stable_idx]          # standardise only, no rescaling by w
+        Zs = _solver_matrix(X_all[:, stable_idx], center, scale)
+        Zs = Zs.toarray() if sparse.issparse(Zs) else np.asarray(Zs)
+
+        names = [self.rule_names_[i] for i in stable_idx]
+        sign_by_name = {
+            f"confirmatory:{r['name']}": r.get("expected_sign")
+            for r in self.confirmatory_rules_
+        }
+        w = np.ones(len(names))
+        lo = np.full(len(names), -np.inf)
+        hi = np.full(len(names), np.inf)
+        for j, nm in enumerate(names):
+            if nm.startswith("confirmatory:"):
+                w[j] = 0.0
+                sgn = sign_by_name.get(nm)
+                if sgn == 1:
+                    lo[j] = 0.0
+                elif sgn == -1:
+                    hi[j] = 0.0
+            elif nm.startswith("optional:"):
+                w[j] = self.optional_penalty
+
+        alpha = 0.0 if self.constrained_penalty == "ridge" else (0.5 if l1 is None else l1)
+        lam = 1.0 / (C * len(y))
+        res = solve_block_logistic(Zs, y, lam, alpha, w, lo, hi)
+        if not res["converged"]:
+            warnings.warn(
+                f"Constrained solver did not converge in {res['n_iter']} "
+                f"iterations (KKT residual {res['kkt_residual']:.2e}).",
+                UserWarning,
+            )
+        self.final_model_ = LinearLogit(res["intercept"], res["coef"], C, alpha,
+                                        info={k: res[k] for k in ("n_iter", "converged")})
+        self.stable_center_ = center
+        self.stable_scale_ = scale
+        self.constrained_info_ = {
+            "C": float(C), "l1_ratio": float(alpha), "lambda": float(lam),
+            "penalty": self.constrained_penalty,
+            "n_iter": int(res["n_iter"]), "converged": bool(res["converged"]),
+            "kkt_residual": float(res["kkt_residual"]),
+            "objective": float(res["objective"]),
+            "bound_active": {
+                nm[len("confirmatory:"):]: bool(res["bound_active"][j])
+                for j, nm in enumerate(names) if nm.startswith("confirmatory:")
+            },
+        }
 
     def _refit_with_confirmatory(self, X_all, y):
         """Refit the final model with confirmatory features unpenalized.
@@ -1231,7 +1360,17 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     def _warn_sign_violations(self):
         """Emit one UserWarning per confirmatory rule whose sign is wrong."""
         for st in getattr(self, "confirmatory_status_", []):
-            if st.get("sign_ok") is False:
+            if st.get("bound_active"):
+                warnings.warn(
+                    f"Confirmatory rule '{st['name']}' is held at 0 by its "
+                    f"expected_sign={st['expected_sign']:+d} bound: given the "
+                    f"other terms, the data push its coefficient the other "
+                    f"way. Check diagnose_confirmatory() for the terms that "
+                    f"carry the effect.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            elif st.get("sign_ok") is False:
                 warnings.warn(
                     f"Confirmatory rule '{st['name']}' has coefficient "
                     f"{st['coefficient']:+.6g} but expected_sign="
@@ -1542,6 +1681,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "intercept": self._get_true_intercept(),
             "standardize": getattr(self, "standardize", False),
             "row_order": getattr(self, "row_order", "as_given"),
+            "confirmatory_mode": getattr(self, "confirmatory_mode", "refit"),
+            "constrained_info": getattr(self, "constrained_info_", None),
             "fingerprint": self.fingerprint(X_reference),
             "n_candidate_features": len(self.rule_names_),
             "n_stable_features": int(self.stable_mask_.sum()),
@@ -1600,11 +1741,17 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         ]
 
         if self.confirmatory_rules_:
-            lines.append(f"\nConfirmatory rules ({len(self.confirmatory_rules_)}):")
+            mode = getattr(self, "confirmatory_mode", "refit")
+            lines.append(f"\nConfirmatory rules ({len(self.confirmatory_rules_)}, mode={mode}):")
             for s in self.confirmatory_status_:
                 status = "ACTIVE" if s["active"] else "INACTIVE"
                 sign = ""
-                if s.get("expected_sign") is not None:
+                if s.get("bound_active"):
+                    sign = (
+                        f" BOUND ACTIVE: held at 0, data push against"
+                        f" expected {s['expected_sign']:+d}"
+                    )
+                elif s.get("expected_sign") is not None:
                     sign = (
                         f" sign={'OK' if s['sign_ok'] else 'CONTRADICTS'}"
                         f" (expected {s['expected_sign']:+d})"
@@ -1709,6 +1856,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "confirmatory_all_active_": self.confirmatory_all_active_,
             "confirmatory_status_": self.confirmatory_status_,
             "confirmatory_sign_ok_": getattr(self, "confirmatory_sign_ok_", True),
+            "constrained_info_": getattr(self, "constrained_info_", None),
             "confirmatory_diagnostics_": getattr(
                 self, "confirmatory_diagnostics_", []
             ),
@@ -1765,6 +1913,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         model.confirmatory_status_ = state["confirmatory_status_"]
         # Older saved models predate the sign check / diagnostics
         model.confirmatory_sign_ok_ = state.get("confirmatory_sign_ok_", True)
+        model.constrained_info_ = state.get("constrained_info_")
         model.confirmatory_diagnostics_ = state.get(
             "confirmatory_diagnostics_", []
         )
@@ -1827,12 +1976,17 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 if not sign_ok:
                     all_sign_ok = False
 
+            bound = bool(
+                (getattr(self, "constrained_info_", None) or {})
+                .get("bound_active", {}).get(rule["name"], False)
+            )
             self.confirmatory_status_.append({
                 "name": rule["name"],
                 "active": active,
                 "coefficient": coef,
                 "expected_sign": expected,
                 "sign_ok": sign_ok,
+                "bound_active": bound,
             })
             if not active:
                 all_active = False
