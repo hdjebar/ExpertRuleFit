@@ -17,9 +17,9 @@ The *confirmatory / optional* terminology, the idea of exempting confirmatory ru
 4. **A conditioning analysis** of penalty weighting by column rescaling: very small weights make saga stop far from the optimum without a warning; standardisation and the weight choice that avoid it.
 5. Also: an optional bootstrap/subsample selection-frequency filter, data-driven interaction rules from EBM (optional, never confirmatory by default), and a stacked EBM + rules model.
 
-**Reproducible interpretable ML for regulated banking environments — EBM-grounded rules that survive any regularization.**
+**Reproducible interpretable rule ensembles for regulated environments, building on Expert RuleFit (Ebner et al. 2021).**
 
-ExpertRuleFit extends [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with **Elastic Net + Bootstrap Stabilization** to guarantee 100/100 seed reproducibility, plus **confirmatory rules** that survive any regularization strength. Integrates with [InterpretML](https://github.com/interpretml/interpret) Explainable Boosting Machines (EBM) to auto-discover interaction rules grounded in shape functions. Built for banking compliance under CSSF/EU AI Act.
+ExpertRuleFit is a Python implementation of [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with Expert RuleFit's confirmatory and optional expert rules, made **deterministic** (same rules and predictions whatever the seed or row order, within the execution envelope below) and with a **sign-constrained confirmatory block**. Integrates with [InterpretML](https://github.com/interpretml/interpret) Explainable Boosting Machines (EBM) to auto-discover interaction rules grounded in shape functions. Built for banking compliance under CSSF/EU AI Act.
 
 ## The Problem
 
@@ -32,7 +32,7 @@ The pipeline (defaults of version 0.8.0):
 0. **Canonical row order** — training rows are sorted before fitting, so any permutation of the same rows gives the same model (`row_order="canonical"`).
 1. **Fixed-seed rule generation** — a gradient-boosting ensemble with internal seed 42 (user `random_state` ignored). By default the candidates are the rules kept by imodels' RuleFit, **which runs its own L1 (Lasso) path and returns at most `max_rules` rules before ExpertRuleFit or the expert rules are involved**. `candidates="trees"` takes every distinct rule from the same trees instead, so selection happens only in the steps below.
 2. **Expert rule augmentation** — confirmatory and optional expert rules, as in Expert RuleFit (Ebner et al. 2021); optional rules get a reduced penalty.
-3. **Selection-frequency filter** — 10 elastic-net logistic fits on stratified half-samples drawn without replacement in complementary pairs (`resampling="subsample"`; the n-out-of-n bootstrap of earlier versions is `resampling="bootstrap"`); columns selected in ≥ 80 % of the fits are kept, confirmatory rules always. `selection="none"` skips this step.
+3. **Selection-frequency filter** — 10 elastic-net logistic fits on stratified half-samples drawn without replacement in complementary pairs (`resampling="subsample"`; the n-out-of-n bootstrap of earlier versions is `resampling="bootstrap"`); columns selected in ≥ 80 % of the fits are kept, confirmatory rules always. **Off by default since 0.8.0** (`selection="none"`): in the B1 study it made the model less stable (see Validation Results); `selection="bootstrap"` turns it on.
 4. **Final elastic-net CV** on the kept columns (standardised; coefficients reported on the original scale).
 5. **Confirmatory block** (`confirmatory_mode="constrained"`) — one convex problem: confirmatory coefficients unpenalised, bounded by their `expected_sign` when one is declared, free otherwise. A coefficient held at 0 by its bound is flagged (warning, audit bundle; `strict=True` raises). `confirmatory_mode="refit"` restores the earlier unpenalised fallback refit.
 
@@ -42,18 +42,19 @@ Guaranteed reproducible within a deterministic execution envelope: **pinned depe
 
 ## Validation Results
 
-Seed sensitivity on **3 credit-scoring datasets** (one stratified 80/20 split, preprocessing fitted on the training split; pinned stack in [`docker/`](docker/): Python 3.11, scikit-learn 1.7.2, imodels 3.0.4). RuleFit is fitted with 100 seeds. ExpertRuleFit ignores the seed by design, so it is run 3 times in separate processes and checked for bitwise-identical output (rule-set hash and SHA-256 of test probabilities).
+Seed sensitivity on **3 credit-scoring datasets** (one stratified 80/20 split, preprocessing fitted on the training split; pinned stack in [`docker/`](docker/): Python 3.11, scikit-learn 1.7.2, imodels 3.0.4). RuleFit is fitted with 100 seeds. ExpertRuleFit 0.8.0 (library defaults, no expert rules) ignores the seed by design, so it is run 3 times in separate processes and checked for bitwise-identical output (rule-set hash and SHA-256 of test probabilities).
 
 | Dataset | RuleFit: runs with the most frequent rule set | ExpertRuleFit: identical runs | RuleFit AUC (mean ± sd over seeds) | ExpertRuleFit AUC |
 |---------|:---:|:---:|:---:|:---:|
-| German Credit (UCI) | 1/100 | **3/3** | 0.788 ± 0.009 | 0.790 |
-| Taiwan Credit (UCI, 5,000-row subsample) | 1/100 | **3/3** | 0.764 ± 0.003 | 0.769 |
-| HMEQ | 1/100 | **3/3** | 0.903 ± 0.003 | 0.903 |
+| German Credit (UCI) | 1/100 | **3/3** | 0.788 ± 0.009 | 0.794 |
+| Taiwan Credit (UCI, 5,000-row subsample) | 1/100 | **3/3** | 0.764 ± 0.003 | 0.757 |
+| HMEQ | 1/100 | **3/3** | 0.903 ± 0.003 | 0.902 |
 
 - Standard RuleFit returned a different rule set for every seed (100 distinct sets per dataset); mean pairwise Jaccard 0.036–0.058.
-- ExpertRuleFit returned the same rules and the same probabilities in every run, with test AUC within 0.005 of RuleFit's mean.
-- This measures **determinism**, which holds by construction, not stability when the training data change (that is the B1 study in [`experiments/`](experiments/)).
-- Reproduce: `python experiments/fetch_data.py`, then `experiments/table1.py` in the `docker/` image. Results: [`experiments/results/table1/`](experiments/results/table1/). One ExpertRuleFit fit took 10 min (German) to 3.5 h (HMEQ) single-threaded.
+- ExpertRuleFit returned the same rules and the same probabilities in every run, with test AUC within 0.007 of RuleFit's mean.
+- This measures **determinism**, which holds by construction, not stability when the training data change.
+- **Stability under perturbation (B1, German Credit, 25 stratified 90 % subsamples):** ExpertRuleFit is *not* more stable than RuleFit with a fixed seed (semantic rule similarity 0.527 vs 0.530; prediction SD 0.079 vs 0.056). The bootstrap selection-frequency filter made it less stable (0.414; 0.087) at ~8× the runtime, so since 0.8.0 it is off by default (`selection="none"`; `selection="bootstrap"` restores it). Results: [`experiments/results/b1/`](experiments/results/b1/).
+- Reproduce: `python experiments/fetch_data.py`, then `experiments/table1.py` in the `docker/` image. Results: [`experiments/results/table1_v080/`](experiments/results/table1_v080/) (0.7.0 run: `table1/`). One ExpertRuleFit fit took 24 s (German) to 6.6 min (HMEQ) single-threaded.
 
 ## Quick Start
 
@@ -61,13 +62,13 @@ Seed sensitivity on **3 credit-scoring datasets** (one stratified 80/20 split, p
 from expertrulefit import ExpertRuleFit
 
 # Fit (auto rules only — reproducible)
-erf = ExpertRuleFit(max_rules=50, n_bootstrap=10, rule_threshold=0.8)
+erf = ExpertRuleFit(max_rules=50)
 erf.fit(X_train, y_train, feature_names=feature_names)
 
 # Predict
 proba = erf.predict_proba(X_test)[:, 1]
 
-# Inspect stable rules
+# Inspect the rules
 for rule in erf.get_rule_importance()[:5]:
     print(f"coef={rule['coefficient']:+.4f} | {rule['name']}")
 
@@ -78,7 +79,7 @@ erf.summary()
 ### With Confirmatory Rules (regulatory requirements)
 
 ```python
-# Define rules that MUST survive regularization
+# Rules the expert requires in the model (unpenalised; optional expected_sign bound)
 confirmatory = [
     {
         "name": "CSSF: High cash ratio",
@@ -164,8 +165,8 @@ from expertrulefit import ExpertRuleFit, discover_interaction_rules
 # Returned rules are OPTIONAL by default (rule_type="optional").
 rules, ebm = discover_interaction_rules(X_train, y_train, feature_names, top_k=3)
 
-# Data-discovered rules enter as optional: reduced penalty, but they must
-# still survive bootstrap filtering like any generated rule.
+# Data-discovered rules enter as optional rules (reduced penalty);
+# they are not confirmatory unless an expert reviews them.
 erf = ExpertRuleFit(max_rules=50)
 erf.fit(X_train, y_train, feature_names=fn,
         confirmatory_rules=confirmatory,   # expert-imposed rules only
@@ -208,10 +209,9 @@ ExpertRuleFit is a **binary classifier** (classes {0, 1}). It outputs hard label
 Training data
   → Fixed-seed GradientBoosting (candidate rules + linear features)
   → Augment with expert rules (confirmatory / optional, adaptive penalty weighting)
-  → Bootstrap × weighted LogisticRegressionCV (elastic net stability filtering)
-  → Frequency filter (≥ 80%, confirmatory force-included)
-  → Final LogisticRegressionCV on stable features
-  → Constrained refit if confirmatory rules zeroed
+  → [optional, selection="bootstrap"] subsample × weighted LogisticRegressionCV, keep columns in ≥ 80 %
+  → Final LogisticRegressionCV (chooses λ, α)
+  → Constrained confirmatory block (unpenalised, sign-bounded; bound-active flagged)
   → Logistic sigmoid → P(y=1)  (optional post-hoc calibration)
 ```
 
@@ -231,7 +231,7 @@ proba = erf.predict_proba(X_test)  # shape (n_samples, 2)
 p_default = proba[:, 1]            # P(y=1) — e.g., probability of default
 ```
 
-Probabilities are logistic-regression outputs; their calibration has not yet been evaluated on the benchmark datasets. If calibrated scores matter (e.g. PD estimates), set `calibration="sigmoid"` or `"isotonic"` and check reliability on held-out data. Each row sums to 1.0. Use `proba[:, 1]` for AUC, ranking, and threshold tuning.
+Probabilities are logistic-regression outputs; their calibration has not yet been evaluated on the benchmark datasets. If calibrated scores matter (e.g. PD estimates), set `calibration="sigmoid"` or `"isotonic"` (in 0.8.0 this requires `confirmatory_mode="refit"`) and check reliability on held-out data. Each row sums to 1.0. Use `proba[:, 1]` for AUC, ranking, and threshold tuning.
 
 ### Custom Decision Threshold
 
@@ -249,7 +249,7 @@ y_custom = (erf.predict_proba(X_test)[:, 1] >= threshold).astype(int)
 for r in erf.get_rule_importance()[:5]:
     print(f"coef={r['coefficient']:+.4f} [{r['category']}] {r['name']}")
 
-# Bootstrap stability of each rule
+# Selection frequency of each column (all 1.0 when selection="none")
 print(erf.bootstrap_frequencies_)
 
 # Full model summary (rules, confirmatory status, importance)
@@ -286,26 +286,25 @@ The prediction is: `P(y=1) = sigmoid(intercept + sum(coef_j * feature_j))`
 
 - **Linear features**: one per input column (continuous contribution)
 - **Rules**: binary {0, 1} from tree-extracted conditions (e.g., `X_3 > 0.4 and X_4 <= 0.15`)
-- **Confirmatory**: regulatory rules with near-zero penalty (guaranteed active)
+- **Confirmatory**: expert-imposed rules, unpenalised; held at 0 and flagged if the data contradict their declared sign
 - **Optional**: analyst rules with reduced penalty (may be eliminated)
 
 > See `examples/prediction_basics.py`, `examples/classification_with_rules.py`, and `examples/prediction_inspection.py` for runnable demonstrations.
 
 ## Two Guarantees
 
-1. **Reproducibility** — same data → same rules → same predictions (100/100 seeds)
-2. **Rule preservation** — confirmatory (regulatory) rules survive any regularization strength
+1. **Reproducibility** — within the execution envelope (same set of rows, same column order, pinned stack), same rules and same predictions whatever the seed or row order
+2. **Confirmatory rules kept in the model** (mechanism from Expert RuleFit, Ebner et al. 2021) — in the default constrained mode, a rule whose declared sign the data contradict is held at zero and flagged rather than given the wrong sign
 
 ## Features
 
-- **100/100 reproducible** — identical rules across 100 random seeds on 3 datasets
-- **Confirmatory rules** — regulatory rules that are never eliminated by regularization
-- **EBM bridge** — auto-discover interactions with InterpretML, inject as confirmatory rules
+- **Seed-independent** — identical rules and predictions in every run (hash-checked on 3 datasets)
+- **Confirmatory rules** (Expert RuleFit, Ebner et al. 2021) — unpenalised, with optional sign bounds; `strict=True` raises if a bound is active
+- **EBM bridge** — discover interactions with InterpretML and add them as optional rules
 - **Dual stacking** — EBM + ExpertRuleFit + LogisticRegression meta-classifier, per-sample explanations
 - **Deterministic by design** — fixed internal seeds, single-threaded BLAS
 - **Interpretable** — rule-based model, transparent by design (EU AI Act Art. 13)
-- **Auditable** — stable output enables consistent regulatory reporting
-- **Production-ready** — no seed sensitivity in deployment
+- **Auditable** — SHA-256 fingerprints of rules, coefficients and predictions in an audit bundle
 - **Built on proven foundations** — extends [imodels](https://github.com/csinva/imodels) (Cynthia Rudin, Duke)
 
 ## Installation
@@ -368,34 +367,27 @@ Random trees (seed-dependent) → Lasso → rule selection
 Different seed → different trees → different rules
 ```
 
-### ExpertRuleFit (deterministic + rule preservation)
+### ExpertRuleFit (deterministic, 0.8.0 defaults)
 ```
-Fixed-seed GradientBoosting (BASE_SEED=42) → extract rules + linear features
+Sort rows (canonical order)
+  → Fixed-seed GradientBoosting (BASE_SEED=42) → RuleFit's rules + linear features
   → augment with expert rules (adaptive penalty weighting)
-  → Bootstrap × weighted LogisticRegressionCV (elastic net)
-  → frequency filter (≥ 80%, confirmatory force-included)
-  → final LogisticRegressionCV on stable features
-  → constrained refit if confirmatory rules zeroed
-Same data → same trees → same stable rules → same output
-Confirmatory rules: penalty ≈ 0 → never eliminated; constrained refit as fallback
+  → final LogisticRegressionCV (elastic net)
+  → constrained confirmatory block (FISTA, no randomness)
+Same set of rows → same trees → same rules → same output
 ```
 
-### Why Elastic Net?
+### What determinism does and does not give
 
-The L2 component of Elastic Net provides two key benefits:
-1. **Group stability** — correlated rules are kept together (vs Lasso's arbitrary selection)
-2. **Smooth coefficient paths** — small data perturbations don't cause rule switching
-
-Combined with bootstrap frequency filtering, this eliminates the selection instability
-that makes standard RuleFit non-reproducible.
+Fixing every seed and the row order removes the run-to-run variation of RuleFit; it does not make the selected rules more stable when the training data change. On German Credit, ExpertRuleFit was not more stable under subsampling than RuleFit with a fixed seed (B1).
 
 ## Regulatory Compliance
 
-| Requirement | Standard | How ExpertRuleFit Complies |
+| Requirement | Standard | How ExpertRuleFit can support it (no compliance claim) |
 |-------------|----------|---------------------------|
-| EU AI Act Art. 9 | Risk management | Reproducible output guarantees consistent risk assessment |
+| EU AI Act Art. 9 | Risk management | Re-running the model gives the same risk assessment (within the envelope) |
 | EU AI Act Art. 12 | Automatic logging | Same model produces identical results at each audit |
-| EU AI Act Art. 13 | Transparency | Stable rules can be documented and explained consistently |
+| EU AI Act Art. 13 | Transparency | Seed-independent rules can be documented and explained consistently |
 | BCBS 239 Principle 3 | Accuracy & integrity | Verifiable results across re-executions |
 | CSSF Circular 12/552 | Model governance | Regulator can re-execute and obtain identical output |
 
@@ -404,8 +396,8 @@ that makes standard RuleFit non-reproducible.
 For a comprehensive survey of recent research (2023--2026) on RuleFit extensions, competing rule-based methods, stability techniques, Rashomon sets, regulatory AI, and how ExpertRuleFit is positioned relative to the field, see **[docs/SOTA.md](docs/SOTA.md)**.
 
 **Key findings:**
-- **Closest competitors:** SIRUS (stability), FIRE/CRE (sparsity), Stability Selection (bootstrap filtering) — none combine all four of ExpertRuleFit's components
-- **Unique niche:** No existing method integrates RuleFit rule generation + bootstrap stability selection + weighted regularization for confirmatory rules + EBM interaction discovery
+- **Direct precedent:** Expert RuleFit (Ebner et al. 2021) introduced confirmatory/optional expert rules in RuleFit (see *Prior work and attribution* above)
+- **Related:** SIRUS (stability), FIRE/CRE (sparsity), stability selection (subsample filtering)
 - **Regulatory window:** ECB July 2025 Guide to Internal Models + EU AI Act Aug 2026 applicability align directly with ExpertRuleFit's design goals
 
 ## References

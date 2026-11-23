@@ -8,15 +8,15 @@
 ## Allowed now (supported by the code and the 100-seed benchmark)
 - Identical rules and predictions on every run within the execution envelope (determinism, by design).
 - Standard RuleFit returns the same rule set in 1 run out of 100 across seeds.
-- Test AUC versus RuleFit: use only the figure from the 0.8.0 Table 1 (`experiments/results/table1_v080/`, see FINDINGS §16). The 0.7.0 figure (0.005) and the pre-fix figure (0.013) are retired.
+- Test AUC versus RuleFit: use only the figure from the 0.8.0 Table 1 (`experiments/results/table1_v080/`, see FINDINGS §18): within 0.007 of RuleFit's mean. The 0.7.0 figure (0.005) and the pre-fix figure (0.013) are retired.
 - RuleFit returned a different rule set for each of 100 seeds on all three datasets; ExpertRuleFit returned identical rules and probabilities in 3 of 3 runs (hash-checked).
 - Confirmatory rules are always kept in the model. A rule without a declared sign gets a non-zero coefficient unless degenerate. In constrained mode (default since 0.8.0), a rule whose declared sign the data contradict is held at zero and flagged; it is then not "included" under Definition 1.
 - **Allowed for constrained mode only (decided 23/11/2026):** "respects the sign declared by the expert; when the data contradict it, the coefficient is held at zero and flagged." 
-- 66 automated tests (pinned stack, 23/11/2026); open source. Public texts still saying "39 tests" are out of date but not wrong at the time written.
+- 104 automated tests (pinned stack, 0.8.0, 23/11/2026); open source. Public texts still saying "39 tests" are out of date but not wrong at the time written.
 
 ## Not allowed until Phase B/C results exist
 - "Stable" or "stability" without the qualifier "across seeds".
-- "Stable under data changes / retraining".
+- "Stable under data changes / retraining". B1 (German, FINDINGS §17) found ExpertRuleFit *not* more stable than fixed-seed RuleFit; do not claim a stability advantage.
 - "Calibrated probabilities" (README currently says this — change to "logistic probabilities; optional post-hoc calibration").
 - "Production-ready", "guaranteed reproducibility" without the execution envelope.
 - "Respects expert intent" in general; only the constrained-mode wording above is allowed, and never for refit mode.
