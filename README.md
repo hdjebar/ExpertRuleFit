@@ -27,14 +27,14 @@ Standard RuleFit uses Lasso (L1) for rule selection, which is **inherently unsta
 
 ## The Solution
 
-ExpertRuleFit replaces Lasso with a **deterministic-by-design** pipeline:
+The pipeline (defaults of version 0.8.0):
 
-1. **Fixed-seed Gradient Boosting** — deterministic tree ensemble (`_BASE_SEED=42`) generates candidate rules + linear features via imodels RuleFit, independent of user `random_state`
-2. **Expert rule augmentation** — append confirmatory (regulatory) and optional (analyst) rules with adaptive penalty weighting (Zou 2006)
-3. **Bootstrap × LogisticRegressionCV (elastic net)** — 10 deterministic bootstrap iterations, each fitting weighted Elastic Net (L1+L2) with per-feature penalty scaling
-4. **Frequency-based filtering** — keep only rules selected in ≥ 80% of bootstraps; confirmatory rules are force-included
-5. **Final LogisticRegressionCV** — refit on stable features only with adaptive weighting
-6. **Confirmatory enforcement** — if any regulatory rule is zeroed by the solver, a post-hoc constrained refit (unpenalized logistic regression) guarantees inclusion
+0. **Canonical row order** — training rows are sorted before fitting, so any permutation of the same rows gives the same model (`row_order="canonical"`).
+1. **Fixed-seed rule generation** — a gradient-boosting ensemble with internal seed 42 (user `random_state` ignored). By default the candidates are the rules kept by imodels' RuleFit, **which runs its own L1 (Lasso) path and returns at most `max_rules` rules before ExpertRuleFit or the expert rules are involved**. `candidates="trees"` takes every distinct rule from the same trees instead, so selection happens only in the steps below.
+2. **Expert rule augmentation** — confirmatory and optional expert rules, as in Expert RuleFit (Ebner et al. 2021); optional rules get a reduced penalty.
+3. **Selection-frequency filter** — 10 elastic-net logistic fits on stratified half-samples drawn without replacement in complementary pairs (`resampling="subsample"`; the n-out-of-n bootstrap of earlier versions is `resampling="bootstrap"`); columns selected in ≥ 80 % of the fits are kept, confirmatory rules always. `selection="none"` skips this step.
+4. **Final elastic-net CV** on the kept columns (standardised; coefficients reported on the original scale).
+5. **Confirmatory block** (`confirmatory_mode="constrained"`) — one convex problem: confirmatory coefficients unpenalised, bounded by their `expected_sign` when one is declared, free otherwise. A coefficient held at 0 by its bound is flagged (warning, audit bundle; `strict=True` raises). `confirmatory_mode="refit"` restores the earlier unpenalised fallback refit.
 
 Guaranteed reproducible within a deterministic execution envelope: **pinned dependency versions, single-threaded BLAS/OpenMP, fixed random seeds, validated input schema with stable feature order, and consistent platform/runtime settings ⇒ identical rule set and identical predictions**.
 
@@ -138,7 +138,7 @@ After standardisation, solver conditioning depends on the 1/√w_c ratio rather 
 
 ### Sign-constrained confirmatory rules (`confirmatory_mode="constrained"`)
 
-By default (`"refit"`), a confirmatory rule is kept in the model but its sign is only checked. With `confirmatory_mode="constrained"`, the final model is one convex problem: confirmatory coefficients are **unpenalised** and bounded by their `expected_sign` (≥ 0 for +1, ≤ 0 for −1), the other columns keep the elastic net chosen by cross-validation, and optional rules keep their penalty factor. A deterministic proximal-gradient solver (FISTA) solves it.
+With `confirmatory_mode="refit"`, a confirmatory rule is kept in the model but its sign is only checked. With `confirmatory_mode="constrained"` (the default since 0.8.0), the final model is one convex problem: confirmatory coefficients are **unpenalised** and bounded by their `expected_sign` (≥ 0 for +1, ≤ 0 for −1), the other columns keep the elastic net chosen by cross-validation, and optional rules keep their penalty factor. A deterministic proximal-gradient solver (FISTA) solves it.
 
 ```python
 erf = ExpertRuleFit(confirmatory_mode="constrained")      # or constrained_penalty="ridge"
@@ -148,12 +148,12 @@ erf.confirmatory_status_[0]["bound_active"]   # True: held at 0 because, given t
 erf.constrained_info_                         # C, l1_ratio, iterations, KKT residual, bounds
 ```
 
-A bound-active rule is reported, not hidden: its coefficient is 0, so it is not *included* in the sense of the paper's Definition 1, and a warning names it. `constrained_penalty="ridge"` makes the problem strictly convex (unique solution) even when generated rules duplicate a confirmatory rule. `"refit"` stays the default for now.
+A bound-active rule is reported, not hidden: its coefficient is 0, so it is not *included* in the sense of the paper's Definition 1, and a warning names it. `constrained_penalty="ridge"` makes the problem strictly convex (unique solution) even when generated rules duplicate a confirmatory rule. Default since 0.8.0; `confirmatory_mode="refit"` keeps the earlier behaviour. `strict=True` turns the bound-active warning into a `ConfirmatoryBoundError`.
 
 ### Re-execution checks
 
 - `erf.fingerprint(X_test)` returns SHA-256 hashes of the active rule set, of the intercept and coefficients, and of the predicted probabilities on `X_test`. `audit_bundle(X_reference=X_test)` includes them. Two runs are the same model if, and only if, the fingerprints match.
-- **Row order matters by default.** Boosting subsamples, bootstrap draws and CV folds index rows by position, so shuffling the training rows changes the model much as changing a seed would (see `experiments/results/row_order/`). `row_order="canonical"` sorts the rows deterministically before fitting: any permutation of the same rows then gives bitwise-identical output.
+- **Row order.** Boosting subsamples, resampling draws and CV folds index rows by position, so with `row_order="as_given"` shuffling the training rows changes the model much as changing a seed would (see `experiments/results/row_order/`). The default since 0.8.0, `row_order="canonical"`, sorts the rows deterministically before fitting: any permutation of the same rows gives bitwise-identical output. Expert rules must therefore be row-wise functions of the features.
 
 ### With EBM-Discovered Interactions (automated pipeline)
 

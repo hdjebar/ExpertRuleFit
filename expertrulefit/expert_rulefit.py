@@ -162,10 +162,43 @@ def _solver_matrix(Z, center, scale):
     return Zs
 
 
-def _bootstrap_iteration(b, X_all, y, center, scale, base_seed, l1_ratios, tol, n_jobs):
-    """Run a single bootstrap iteration (for joblib parallelization)."""
-    rng = np.random.RandomState(base_seed + b)
-    idx = rng.choice(len(y), size=len(y), replace=True)
+def _resample_indices(y, n_draws, base_seed, scheme):
+    """Row indices of the resamples used by the selection-frequency filter.
+
+    ``"subsample"`` (default since 0.8.0): complementary pairs of stratified
+    half-samples drawn without replacement (the sampling scheme of
+    complementary-pairs stability selection, Shah & Samworth 2013). Pair k
+    uses ``RandomState(base_seed + k)``; within each class the rows are
+    permuted and split in two halves. No row appears twice in a resample,
+    so the inner CV folds never share duplicated rows.
+
+    ``"bootstrap"``: n-out-of-n draws with replacement, seed base_seed + b
+    (behaviour before 0.8.0).
+    """
+    y = np.asarray(y)
+    if scheme == "bootstrap":
+        return [np.random.RandomState(base_seed + b).choice(len(y), size=len(y), replace=True)
+                for b in range(n_draws)]
+    draws = []
+    k = 0
+    classes = np.unique(y)
+    while len(draws) < n_draws:
+        rng = np.random.RandomState(base_seed + k)
+        first, second = [], []
+        for c in classes:
+            idx_c = np.where(y == c)[0]
+            perm = rng.permutation(idx_c)
+            half = len(perm) // 2
+            first.append(perm[:half])
+            second.append(perm[half:])
+        draws.append(np.sort(np.concatenate(first)))
+        draws.append(np.sort(np.concatenate(second)))
+        k += 1
+    return draws[:n_draws]
+
+
+def _bootstrap_iteration(idx, X_all, y, center, scale, base_seed, l1_ratios, tol, n_jobs):
+    """Fit one resample of the selection-frequency filter (joblib-friendly)."""
     X_boot = _solver_matrix(X_all[idx], center, scale)
     y_boot = y[idx]
 
@@ -179,6 +212,75 @@ def _bootstrap_iteration(b, X_all, y, center, scale, base_seed, l1_ratios, tol, 
     )
     log_reg.fit(X_boot, y_boot)
     return (np.abs(log_reg.coef_[0]) > 1e-10).astype(int)
+
+
+class ConfirmatoryBoundError(ValueError):
+    """Raised with ``strict=True`` when a confirmatory sign bound is active."""
+
+
+class _Rule:
+    """Minimal stand-in for imodels' Rule (``.rule`` holds the X_i form)."""
+
+    def __init__(self, rule, name):
+        self.rule = rule
+        self._name = name
+
+    def __str__(self):
+        return self._name
+
+
+class TreeRuleCandidates:
+    """Candidate rules taken directly from the tree ensemble (D3).
+
+    imodels' ``RuleFitClassifier`` keeps only the rules its own L1 path
+    selects (at most ``max_rules``) before ExpertRuleFit sees them. This
+    holder instead keeps every distinct rule extracted from the same
+    fixed-seed boosting ensemble, drops rules with support outside
+    [min_support, 1 - min_support], merges rules with identical activation
+    vectors (keeping the lexicographically first), and orders them
+    lexicographically. ``max_candidates`` (optional) keeps the first ones in
+    that order. Exposes ``rules_without_feature_names_`` and ``rules_`` like
+    a fitted RuleFitClassifier, so the rest of the pipeline is unchanged.
+    """
+
+    def __init__(self, n_estimators, tree_size, random_state, min_support=0.01,
+                 max_candidates=None):
+        self.n_estimators = n_estimators
+        self.tree_size = tree_size
+        self.random_state = random_state
+        self.min_support = min_support
+        self.max_candidates = max_candidates
+
+    def fit(self, X, y, feature_names):
+        from imodels.util.extract import extract_rulefit
+
+        X = np.asarray(X, dtype=np.float64)
+        placeholders = [f"X_{i}" for i in range(X.shape[1])]
+        raw = extract_rulefit(X, y, feature_names=placeholders,
+                              n_estimators=self.n_estimators, tree_size=self.tree_size,
+                              random_state=self.random_state)
+        seen = {}
+        for r in sorted(set(str(r) for r in raw)):
+            col = eval_rule_on_data(r, X)
+            sup = col.mean()
+            if sup < self.min_support or sup > 1 - self.min_support:
+                continue
+            key = np.packbits(col.astype(bool)).tobytes()
+            if key not in seen:
+                seen[key] = r
+        rules = sorted(seen.values())
+        if self.max_candidates is not None:
+            rules = rules[: self.max_candidates]
+        self.n_extracted_ = len(set(map(str, raw)))
+        self.rules_without_feature_names_ = [
+            _Rule(r, self._named(r, feature_names)) for r in rules
+        ]
+        self.rules_ = [str(r) for r in self.rules_without_feature_names_]
+        return self
+
+    @staticmethod
+    def _named(rule, feature_names):
+        return re.sub(r"\bX_(\d+)\b", lambda m: str(feature_names[int(m.group(1))]), rule)
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +504,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Number of CPU cores for cross-validation. ``None`` means 1 core.
         Use ``-1`` for all cores (caution on shared infrastructure).
 
-    confirmatory_mode : {"refit", "constrained", "none"}, default="refit"
+    confirmatory_mode : {"constrained", "refit", "none"}, default="constrained"
         How the final model treats confirmatory rules. (``"none"`` skips
         both the refit and the constrained solve; for ablation studies.)
 
@@ -417,10 +519,18 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
           rules). Deterministic FISTA solver (see ``constrained.py``). A
           confirmatory coefficient held at 0 by its bound is reported as
           ``bound_active`` (the data push against the expert's sign).
+          Rules without ``expected_sign`` are unpenalised and free.
+          Default since 0.8.0.
 
-    selection : {"bootstrap", "none"}, default="bootstrap"
-        ``"none"`` skips the bootstrap frequency filter: every candidate
-        column goes to the final elastic-net fit. For ablation studies.
+    selection : {"none", "bootstrap"}, default="none"
+        ``"bootstrap"`` runs the selection-frequency filter (``n_bootstrap``
+        resampled elastic-net fits, keep columns selected in at least
+        ``rule_threshold`` of them). ``"none"`` (default since 0.8.0) skips
+        it: every candidate column goes to the final elastic-net fit. In the
+        German Credit perturbation study (25 stratified 90 % subsamples) the
+        filter made rule sets and predictions *less* stable and cost about
+        8x the runtime, so it is off by default; see
+        docs/refinement/notes/FINDINGS_2026-11-22.md §17.
 
     constrained_penalty : {"elasticnet", "ridge"}, default="elasticnet"
         Penalty on non-confirmatory columns in ``"constrained"`` mode.
@@ -428,13 +538,34 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         columns and the intercept have full rank, so the solution is unique
         even when generated rules duplicate a confirmatory rule.
 
-    row_order : {"as_given", "canonical"}, default="as_given"
+    row_order : {"canonical", "as_given"}, default="canonical"
         ``"canonical"`` sorts the training rows (lexicographically by the
-        feature values, then the label) before fitting, so any permutation
+        feature values, then the label) before fitting; expert rules must
+        therefore be row-wise functions of X (not of row position), so any permutation
         of the same rows gives bitwise-identical output. With
         ``"as_given"`` the result depends on row order, because the
         boosting subsamples, the bootstrap draws and the (unshuffled) CV
-        folds index rows by position.
+        folds index rows by position. Default ``"canonical"`` since 0.8.0.
+
+    resampling : {"subsample", "bootstrap"}, default="subsample"
+        Draws for the selection-frequency filter. ``"subsample"``:
+        complementary pairs of stratified half-samples without replacement
+        (``n_bootstrap`` draws in total), so inner CV folds never contain
+        duplicated rows. ``"bootstrap"``: n-out-of-n with replacement
+        (before 0.8.0).
+
+    candidates : {"rulefit", "trees"}, default="rulefit"
+        Source of the candidate rules. ``"rulefit"``: the rules kept by
+        imodels' RuleFit, which runs its own L1 path and returns at most
+        ``max_rules`` rules with non-zero coefficient, before ExpertRuleFit
+        (and its expert rules) are involved. ``"trees"``: every distinct
+        rule of the same fixed-seed boosting ensemble (see
+        :class:`TreeRuleCandidates`), so selection happens only in
+        ExpertRuleFit; slower, since there are many more candidates.
+
+    strict : bool, default=False
+        If True, a confirmatory rule whose sign bound is active (constrained
+        mode) raises :class:`ConfirmatoryBoundError` instead of a warning.
 
     standardize : bool, default=True
         Standardise the candidate columns before weighting and fitting:
@@ -524,10 +655,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         deterministic=True,
         thread_limit=1,
         standardize=True,
-        row_order="as_given",
-        confirmatory_mode="refit",
+        row_order="canonical",
+        confirmatory_mode="constrained",
         constrained_penalty="elasticnet",
-        selection="bootstrap",
+        selection="none",
+        resampling="subsample",
+        candidates="rulefit",
+        strict=False,
     ):
         self.n_estimators = n_estimators
         self.tree_size = tree_size
@@ -548,6 +682,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.confirmatory_mode = confirmatory_mode
         self.constrained_penalty = constrained_penalty
         self.selection = selection
+        self.resampling = resampling
+        self.candidates = candidates
+        self.strict = strict
 
     # ------------------------------------------------------------------
     # Validation
@@ -677,6 +814,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.optional_rules_ = optional_rules
 
         self._validate_inputs(X, y)
+        if self.resampling not in ("subsample", "bootstrap"):
+            raise ValueError(
+                f"resampling must be 'subsample' or 'bootstrap', got {self.resampling!r}"
+            )
+        if self.candidates not in ("rulefit", "trees"):
+            raise ValueError(
+                f"candidates must be 'rulefit' or 'trees', got {self.candidates!r}"
+            )
         if self.selection not in ("bootstrap", "none"):
             raise ValueError(
                 f"selection must be 'bootstrap' or 'none', got {self.selection!r}"
@@ -734,14 +879,21 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             # === Step 1: Fit base RuleFit with FIXED seed ===
             logger.info("Step 1: Fitting base RuleFit (seed=%d)", self._BASE_SEED)
-            self.base_rulefit_ = RuleFitClassifier(
-                n_estimators=self.n_estimators,
-                tree_size=self.tree_size,
-                max_rules=self.max_rules,
-                random_state=self._BASE_SEED,
-                include_linear=True,
-            )
-            self.base_rulefit_.fit(X, y, feature_names=self.feature_names_)
+            if self.candidates == "trees":
+                self.base_rulefit_ = TreeRuleCandidates(
+                    n_estimators=self.n_estimators,
+                    tree_size=self.tree_size,
+                    random_state=self._BASE_SEED,
+                ).fit(X, y, self.feature_names_)
+            else:
+                self.base_rulefit_ = RuleFitClassifier(
+                    n_estimators=self.n_estimators,
+                    tree_size=self.tree_size,
+                    max_rules=self.max_rules,
+                    random_state=self._BASE_SEED,
+                    include_linear=True,
+                )
+                self.base_rulefit_.fit(X, y, feature_names=self.feature_names_)
 
             # === Step 2: Build rule feature matrix ===
             X_rules_sparse = build_rule_feature_matrix(self.base_rulefit_, X)
@@ -812,12 +964,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             if self.selection == "none":
                 results = [np.ones(n_total_features, dtype=int)]
             else:
+                draws = _resample_indices(y, self.n_bootstrap, self._BASE_SEED,
+                                          self.resampling)
                 results = Parallel(n_jobs=bootstrap_n_jobs)(
                     delayed(_bootstrap_iteration)(
-                        b, X_all, y, col_center, col_scale,
+                        idx, X_all, y, col_center, col_scale,
                         self._BASE_SEED, self.l1_ratios, self.tol, inner_n_jobs,
                     )
-                    for b in range(self.n_bootstrap)
+                    for idx in draws
                 )
 
             # Filter out failed iterations (returned as None)
@@ -919,6 +1073,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             _lap("refit_or_constrained")
             # === Step 7b: Sign check + absorption diagnostics ===
+            bound = [st["name"] for st in self.confirmatory_status_ if st.get("bound_active")]
+            if bound and self.strict:
+                raise ConfirmatoryBoundError(
+                    "strict=True: the expected_sign bound is active for "
+                    f"confirmatory rule(s) {bound}: given the other terms, the "
+                    "data push their coefficients past the expert's sign, so "
+                    "they are held at 0 and not included (Definition 1)."
+                )
             self._warn_sign_violations()
             self.confirmatory_diagnostics_ = (
                 self._compute_confirmatory_diagnostics(X_all, y)
@@ -1682,6 +1844,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "standardize": getattr(self, "standardize", False),
             "row_order": getattr(self, "row_order", "as_given"),
             "confirmatory_mode": getattr(self, "confirmatory_mode", "refit"),
+            "confirmatory_bound_active": [
+                st["name"] for st in getattr(self, "confirmatory_status_", [])
+                if st.get("bound_active")
+            ],
+            "selection": getattr(self, "selection", "bootstrap"),
+            "resampling": getattr(self, "resampling", "bootstrap"),
+            "candidates": getattr(self, "candidates", "rulefit"),
             "constrained_info": getattr(self, "constrained_info_", None),
             "fingerprint": self.fingerprint(X_reference),
             "n_candidate_features": len(self.rule_names_),
@@ -1892,6 +2061,12 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         model = cls(**state["params"])
         if "standardize" not in state["params"]:
             model.standardize = False  # saved before standardisation existed
+        # Settings added later: record what older models were fitted with
+        for key, old in (("row_order", "as_given"), ("confirmatory_mode", "refit"),
+                         ("resampling", "bootstrap"), ("candidates", "rulefit"),
+                         ("selection", "bootstrap")):
+            if key not in state["params"]:
+                setattr(model, key, old)
         model.base_rulefit_ = state["base_rulefit_"]
         model.final_model_ = state["final_model_"]
         model.stable_mask_ = state["stable_mask_"]

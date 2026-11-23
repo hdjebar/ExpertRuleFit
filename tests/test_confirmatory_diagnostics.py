@@ -10,7 +10,9 @@ from expertrulefit.rule_spec import load_rule_specs, save_rule_specs
 
 # Small, fast configuration: these tests exercise the diagnostics, not the
 # rule generator.
-FAST = dict(n_estimators=30, max_rules=10, n_bootstrap=2)
+# These tests exercise the refit-mode sign check and diagnostics.
+FAST = dict(n_estimators=30, max_rules=10, n_bootstrap=2, confirmatory_mode="refit",
+            selection="bootstrap")
 
 
 @pytest.fixture(scope="module")
@@ -38,10 +40,13 @@ def _rule_b_pos(expected_sign=None):
 
 
 def _noise_rule():
-    # Alternating 0/1 pattern: unrelated to y and to every feature.
+    # Parity of the third decimal of feature c (independent noise):
+    # unrelated to y and nearly uncorrelated with the features. It is a
+    # row-wise function of X, as rules must be (rows are sorted before
+    # fitting with the default row_order="canonical").
     return {
         "name": "noise",
-        "evaluate": lambda X, fn: (np.arange(X.shape[0]) % 2).astype(float),
+        "evaluate": lambda X, fn: (np.floor(np.abs(X[:, 2]) * 1000) % 2).astype(float),
     }
 
 

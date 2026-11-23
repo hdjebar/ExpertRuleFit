@@ -66,7 +66,8 @@ def test_free_when_expert_sign_agrees(flip_data):
 def test_refit_mode_flags_the_same_case_without_bounding(flip_data):
     X, y, fn = flip_data
     with pytest.warns(UserWarning, match="contradicts"):
-        m = ExpertRuleFit(**FAST).fit(X, y, feature_names=fn, confirmatory_rules=rule(+1))
+        m = ExpertRuleFit(confirmatory_mode="refit", **FAST).fit(
+            X, y, feature_names=fn, confirmatory_rules=rule(+1))
     assert m.confirmatory_mode == "refit"
     assert m.confirmatory_status_[0]["coefficient"] < 0
     assert m.confirmatory_status_[0]["bound_active"] is False
@@ -124,3 +125,37 @@ def test_ablation_options_and_timings(flip_data):
     assert m.timings_["bootstrap"] < 1.0              # bootstraps skipped
     with pytest.raises(ValueError, match="selection"):
         ExpertRuleFit(selection="cpss", **FAST).fit(X, y)
+
+
+def test_v080_defaults():
+    m = ExpertRuleFit()
+    assert m.row_order == "canonical"
+    assert m.confirmatory_mode == "constrained"
+    assert m.resampling == "subsample"
+    assert m.candidates == "rulefit"
+    assert m.selection == "none"
+    assert m.strict is False
+
+
+def test_strict_raises_on_bound_active(flip_data):
+    from expertrulefit import ConfirmatoryBoundError
+
+    X, y, fn = flip_data
+    with pytest.raises(ConfirmatoryBoundError, match="a>0"):
+        ExpertRuleFit(strict=True, **FAST).fit(
+            X, y, feature_names=fn, confirmatory_rules=rule(+1))
+
+
+def test_bound_active_listed_in_audit_bundle(bound_model):
+    assert bound_model.audit_bundle()["confirmatory_bound_active"] == ["a>0"]
+
+
+def test_rule_without_expected_sign_is_free(flip_data):
+    """No expected_sign: unpenalised and unbounded, so the negative
+    conditional effect is estimated, not clipped."""
+    X, y, fn = flip_data
+    free = [{"name": "a>0", "evaluate": lambda X, fn: (X[:, 0] > 0).astype(float)}]
+    m = ExpertRuleFit(**FAST).fit(X, y, feature_names=fn, confirmatory_rules=free)
+    st = m.confirmatory_status_[0]
+    assert st["coefficient"] < 0 and st["bound_active"] is False
+    assert m.confirmatory_all_active_

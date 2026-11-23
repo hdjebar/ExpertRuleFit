@@ -37,7 +37,7 @@ def test_fit_and_predict(credit_data):
     """Test basic fit/predict cycle."""
     X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=20, n_bootstrap=3)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=20, n_bootstrap=3)
     erf.fit(X, y, feature_names=fn)
 
     proba = erf.predict_proba(X)
@@ -52,10 +52,10 @@ def test_reproducibility(credit_data):
     """Test that two fits with different random_state produce identical rules."""
     X, y, fn = credit_data
 
-    erf1 = ExpertRuleFit(max_rules=20, n_bootstrap=3, random_state=0)
+    erf1 = ExpertRuleFit(selection="bootstrap", max_rules=20, n_bootstrap=3, random_state=0)
     erf1.fit(X, y, feature_names=fn)
 
-    erf2 = ExpertRuleFit(max_rules=20, n_bootstrap=3, random_state=99)
+    erf2 = ExpertRuleFit(selection="bootstrap", max_rules=20, n_bootstrap=3, random_state=99)
     erf2.fit(X, y, feature_names=fn)
 
     rules1 = erf1.get_selected_rules()
@@ -71,7 +71,7 @@ def test_get_selected_rules(credit_data):
     """Test rule extraction."""
     X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=30, n_bootstrap=5, rule_threshold=0.6)
     erf.fit(X, y, feature_names=fn)
 
     rules = erf.get_selected_rules()
@@ -84,7 +84,7 @@ def test_get_rule_importance(credit_data):
     """Test rule importance retrieval."""
     X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=30, n_bootstrap=5, rule_threshold=0.6)
     erf.fit(X, y, feature_names=fn)
 
     importance = erf.get_rule_importance()
@@ -104,7 +104,7 @@ def test_summary(credit_data, capsys):
     """Test summary output (print and return_string modes)."""
     X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=20, n_bootstrap=3)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=20, n_bootstrap=3)
     erf.fit(X, y, feature_names=fn)
 
     # Test print mode
@@ -123,7 +123,7 @@ def test_stable_mask(credit_data):
     """Test that stable_mask_ is properly set after fit."""
     X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=20, n_bootstrap=5, rule_threshold=0.8)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=20, n_bootstrap=5, rule_threshold=0.8)
     erf.fit(X, y, feature_names=fn)
 
     assert hasattr(erf, "stable_mask_")
@@ -142,7 +142,7 @@ def test_confirmatory_rules_preserved(credit_data):
         },
     ]
 
-    erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=30, n_bootstrap=5, rule_threshold=0.6)
     erf.fit(X, y, feature_names=fn, confirmatory_rules=confirmatory)
 
     # Confirmatory rule must be in the stable set
@@ -173,7 +173,7 @@ def test_confirmatory_summary(credit_data, capsys):
         },
     ]
 
-    erf = ExpertRuleFit(max_rules=20, n_bootstrap=3)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=20, n_bootstrap=3)
     erf.fit(X, y, feature_names=fn, confirmatory_rules=confirmatory)
 
     erf.summary()
@@ -193,7 +193,7 @@ def test_optional_rules(credit_data):
         },
     ]
 
-    erf = ExpertRuleFit(max_rules=30, n_bootstrap=5, rule_threshold=0.6)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=30, n_bootstrap=5, rule_threshold=0.6)
     erf.fit(X, y, feature_names=fn, optional_rules=optional)
 
     # Optional rule is registered (but may or may not survive bootstrap)
@@ -208,7 +208,7 @@ def test_bootstrap_frequencies(credit_data):
     """Test that bootstrap_frequencies_ is properly set after fit."""
     X, y, fn = credit_data
 
-    erf = ExpertRuleFit(max_rules=20, n_bootstrap=5, rule_threshold=0.8)
+    erf = ExpertRuleFit(selection="bootstrap", max_rules=20, n_bootstrap=5, rule_threshold=0.8)
     erf.fit(X, y, feature_names=fn)
 
     assert hasattr(erf, "bootstrap_frequencies_")

@@ -1,6 +1,6 @@
 """ExpertRuleFit — Reproducible interpretable ML for regulated environments."""
 
-from .expert_rulefit import ExpertRuleFit
+from .expert_rulefit import ExpertRuleFit, ConfirmatoryBoundError, TreeRuleCandidates
 from .ebm_bridge import discover_interaction_rules
 from .dual_model import DualModel
 from .dual_glass_box import DualGlassBox, EBMRuleExtractor, ExtractedRule
@@ -18,6 +18,8 @@ except Exception:
 
 __all__ = [
     "ExpertRuleFit",
+    "ConfirmatoryBoundError",
+    "TreeRuleCandidates",
     "discover_interaction_rules",
     "DualModel",
     "DualGlassBox",
