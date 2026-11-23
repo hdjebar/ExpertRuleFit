@@ -88,7 +88,7 @@ Hashes are those on GitHub.
 
 1. **Ebner citation fix.**
    - Cite only Luisa Ebner's **thesis** and the **R package** (github.com/LuisaEbner/ERF).
-   - **Remove every mention of KR4HC / AIME 2021 / LNCS** from the paper's `ebner2021` bibitem, README "Prior work and attribution", CLAIMS_POLICY (P0 box), FINDINGS §14, the paper's Table 1 row, and the PR text if reused.
+   - Remove every workshop/proceedings citation from the paper bibitem, README "Prior work and attribution", CLAIMS_POLICY (P0 box), FINDINGS §14 and the paper's Table 1 row. **Done 24/11/2026** (FINDINGS §14).
    - Verify the thesis details (title, degree, university, year) from a source you actually open before writing them; do not guess them.
 2. **Tag `v0.8.0`** on `main` after item 1 is merged (annotated tag, pushed).
 3. **CI fix** (small; needed before a release looks credible). Drop Python 3.9 from the matrix (or pin `runs-on: ubuntu-24.04`), run `ruff format .` and `ruff check --fix .`, and confirm the tests pass on CI. Note that CI runs unpinned scikit-learn; the authoritative numbers come from the pinned image.
@@ -146,7 +146,7 @@ Resume the ExpertRuleFit refinement (repo hdjebar/ExpertRuleFit, branch main).
 First read docs/refinement/SESSION_HANDOFF.md, then
 docs/refinement/notes/CLAIMS_POLICY.md and FINDINGS_2026-11-22.md §14–18.
 Do the "Pending, in order" list, starting with item 1 (Ebner citation:
-thesis + R package only, remove KR4HC/AIME/LNCS everywhere; verify the
+thesis + R package only, no workshop citation; verify the
 thesis details from a source you open), then item 3 (CI fix) and item 2
 (tag v0.8.0). Work on a new branch per item, open a draft PR, keep all
 standing rules in the handoff (determinism hash-checks, full test suite

@@ -3,7 +3,7 @@
 Handoff folder to continue improving ExpertRuleFit (code + paper) in a new conversation or a Claude Code session. Prepared 22/11/2026.
 
 ## ⚠ P0 — prior work
-A method with the same name and the same core mechanism exists (Expert RuleFit, Ebner et al., LMU, R package ERF). Read the P0 box at the top of `ACTION_PLAN.md` before any other work.
+A method with the same name and the same core mechanism exists (Expert RuleFit, L. Ebner, MSc thesis, R package ERF). Read the P0 box at the top of `ACTION_PLAN.md` before any other work.
 
 ## Start here
 

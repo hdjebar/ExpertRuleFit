@@ -1,10 +1,10 @@
 # Action plan — ExpertRuleFit refinement
 
-> **P0 — BLOCKING, do first (from review 4, verified 23/11/2026).** A method with the *same name* and the *same core idea* already exists: **Expert RuleFit (ERF)** by Luisa Ebner (LMU Munich master thesis, with M. Nalenz, A. ten Teije, F. van Harmelen, T. Augustin), R implementation at github.com/LuisaEbner/ERF. It extends RuleFit with *confirmatory* expert rules (exempt from penalisation) and *optional* expert rules (adaptive penalty factor). Our README, paper and Table 1 present this as new. Before anything else:
+> **P0 — BLOCKING, do first (from review 4, verified 23/11/2026).** A method with the *same name* and the *same core idea* already exists: **Expert RuleFit (ERF)** by Luisa Ebner (MSc thesis), R implementation at github.com/LuisaEbner/ERF. It extends RuleFit with *confirmatory* expert rules (exempt from penalisation) and *optional* expert rules (adaptive penalty factor). Our README, paper and Table 1 present this as new. Before anything else:
 > 1. README: add a "Prior work and attribution" section at the top: ExpertRuleFit (Python) builds on Expert RuleFit (Ebner et al.); the confirmatory/optional concept and adaptive penalties are theirs; our additions are listed explicitly (determinism by design and execution envelope, bootstrap frequency filter, standardisation + conditioning fix, sign/absorption diagnostics, audit bundle, EBM-optional discovery).
-> 2. Paper: cite Ebner (thesis, and the 2021 workshop paper if its venue is verified), add a row to Table 1 ("Expert RuleFit (Ebner et al.) — rule ensemble — not measured — not stated — yes, penalty factor 0"), rewrite contribution 1 and the abstract so the confirmatory/optional mechanism is credited, not claimed.
+> 2. Paper: cite Ebner (thesis and R package only), add a row to Table 1 ("Expert RuleFit (Ebner et al.) — rule ensemble — not measured — not stated — yes, penalty factor 0"), rewrite contribution 1 and the abstract so the confirmatory/optional mechanism is credited, not claimed.
 > 3. Decide on the name. Options: keep "ExpertRuleFit" with explicit credit (acceptable but confusing), or rename (e.g. "DetERF", "AuditRuleFit"). Ask the author; do not rename on your own.
-> 4. Verify the exact bibliographic details of the Ebner work (thesis year, workshop venue — review 4 says KR4HC/AIME 2021, LNCS 12721; unverified).
+> 4. Bibliographic details: done 24/11/2026 (FINDINGS §14). Title and "MSc thesis" verified from the ERF README; university and year not stated there, so not given.
 
 Ordered by impact on the paper's main weakness (no stability-under-perturbation evidence) and on governance risk. Reviewer references: "R:" points to the line of thought in `review/2026-11-22_paperreview-ai_review.md`.
 
