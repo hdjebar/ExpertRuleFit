@@ -3,7 +3,8 @@
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
 \usepackage[margin=2.4cm]{geometry}
-\usepackage{amsmath,amssymb}
+\usepackage{amsmath,amssymb,amsthm}
+\theoremstyle{definition}\newtheorem{definition}{Definition}
 \usepackage{booktabs}
 \usepackage{graphicx}
 \usepackage{microtype}
@@ -39,10 +40,10 @@ In regulated settings such as credit, insurance or tax administration, this bloc
 
 \paragraph{Contributions.}
 \begin{enumerate}
-  \item An estimator combining RuleFit rule generation, bootstrap selection-frequency filtering and penalty-weighted expert rules, with a constrained refit that guarantees the inclusion of confirmatory rules (Section~\ref{sec:method}).
+  \item An estimator combining RuleFit rule generation, bootstrap selection-frequency filtering and penalty-weighted expert rules, with a constrained refit that enforces the inclusion of confirmatory rules in the sense of Definition~\ref{def:inclusion}: present with a non-zero coefficient, not with a given sign (Section~\ref{sec:method}).
   \item A precise statement of the reproducibility guarantee as determinism within an execution envelope, and of what it does not cover (Section~\ref{sec:repro}).
   \item A benchmark on three credit datasets, together with an explicit analysis of what it does and does not show, and a protocol for measuring stability under data perturbation (Section~\ref{sec:exp}).
-  \item An open-source Python implementation (about 4{,}000 lines, 39 automated tests) built on \texttt{imodels} \citep{singh2021} and \texttt{scikit-learn}.
+  \item An open-source Python implementation built on \texttt{imodels} \citep{singh2021} and \texttt{scikit-learn}. All results refer to \textsc{ExpertRuleFit} 0.7.0, commit \texttt{281d5a6}, with 66 automated tests passing in a container built from \texttt{python:3.11-slim@sha256:07d48240\ldots} and a hash-locked dependency file (SHA-256 \texttt{990ced9d\ldots}).
 \end{enumerate}
 
 \section{Related work}\label{sec:related}
@@ -86,20 +87,22 @@ where $r_j$ are tree-derived binary rules, $c_j$ confirmatory expert rules and $
 \[
 \text{L1 term}\propto \sqrt{w_j}\,|\beta_j|,\qquad \text{L2 term}\propto w_j\,\beta_j^2 .
 \]
-With $w_c=10^{-2}$ the $\ell_1$ penalty on confirmatory rules is reduced by a factor of 10 and the $\ell_2$ penalty by a factor of 100. Coefficients and the intercept are mapped back to the original scale before reporting. Earlier versions used $w_c=10^{-8}$ without standardisation. A confirmatory column was then $10^4$ times larger than the others, which made the saga solver stop far from the optimum without a convergence warning. After standardisation, the conditioning of the problem depends on the ratio $1/\sqrt{w_c}$ rather than on the data; $w_c=10^{-2}$ is the smallest value that fitted without convergence warnings in the sensitivity study below. Inclusion of confirmatory rules does not rely on $w_c$: they bypass the frequency filter, and the refit below restores any the solver sets to zero.
+With $w_c=10^{-2}$ the $\ell_1$ penalty on confirmatory rules is reduced by a factor of 10 and the $\ell_2$ penalty by a factor of 100. Coefficients and the intercept are mapped back to the original scale before reporting. Earlier versions used $w_c=10^{-8}$ without standardisation. A confirmatory column was then $10^4$ times larger than the others, which made the saga solver stop far from the optimum without a convergence warning. After standardisation, the conditioning of the problem depends on the ratio $1/\sqrt{w_c}$ rather than on the data; $w_c=10^{-2}$ is the smallest value that fitted without convergence warnings in the sensitivity study below. Inclusion of confirmatory rules (Definition~\ref{def:inclusion}) does not rely on $w_c$.
+
+\begin{definition}[Inclusion]\label{def:inclusion} A confirmatory rule $c$ is \emph{included} if its column is part of the final model and its fitted coefficient is non-zero ($|\beta_c|>10^{-10}$).\end{definition} Inclusion says nothing about the sign or size of $\beta_c$. The estimator ensures inclusion by exempting $C$ from the frequency filter and, if the final fit sets some $\beta_c$ to zero, refitting with $C$ unpenalised; if a rule is still excluded (perfect collinearity or a constant column), the flag \texttt{confirmatory\_all\_active\_} is false and a warning is raised.
 
 \begin{algorithm}[h]
 \caption{\textsc{ExpertRuleFit} training}\label{alg:erf}
 \KwIn{$X$, $y$, confirmatory rules $C$, optional rules $O$, $B=10$, threshold $\tau=0.8$}
 Fit gradient boosting (250 trees, depth 4, seed 42) and extract at most 50 rules $R$ via \texttt{imodels} RuleFit\;
-Build $Z$ from linear terms, $R$, $C$, $O$; set weights $w$\;
+Build $Z$ from linear terms, $R$, $C$, $O$; compute centres $m$, scales $s$ and weights $w$\;
 \For{$b=1$ \KwTo $B$}{
   Draw bootstrap sample with seed $42+b$\;
-  Fit elastic-net \texttt{LogisticRegressionCV} on $Z/\sqrt{w}$ (saga, 3-fold, $\ell_1$ ratio in $\{0.1,\dots,1\}$)\;
+  Fit elastic-net \texttt{LogisticRegressionCV} on $(Z-m)/(s\sqrt{w})$ (saga, 3-fold, $\ell_1$ ratio in $\{0.1,\dots,1\}$)\;
   Record which coefficients are non-zero\;
 }
 Keep columns selected in at least $\tau B$ fits, plus all of $C$\;
-Fit final elastic-net \texttt{LogisticRegressionCV} on kept columns\;
+Fit final elastic-net \texttt{LogisticRegressionCV} on the kept columns of $(Z-m)/(s\sqrt{w})$\;
 \If{some $c\in C$ has $\beta_c=0$}{Refit with $C$ unpenalised\;}
 \KwOut{rules, coefficients, flag \texttt{confirmatory\_all\_active\_}}
 \end{algorithm}
@@ -112,49 +115,51 @@ The user's \texttt{random\_state} is ignored (a warning is emitted); all interna
 
 \section{Reproducibility guarantee}\label{sec:repro}
 
-The guarantee is bitwise determinism within an execution envelope: the same training data, in the same column order, on the same software stack, yields the same rule set and predictions. The envelope requires pinned versions of Python, NumPy, scikit-learn and imodels; single-threaded BLAS and OpenMP; the fixed internal seeds; a validated input schema with stable feature order; and identical platform settings. A container recipe with pinned image digests is provided in the repository.
+The guarantee is bitwise determinism within an execution envelope: the same training data, in the same column order, on the same software stack, yields the same rule set and predictions. The envelope requires pinned versions of Python, NumPy, scikit-learn and imodels; single-threaded BLAS and OpenMP; the fixed internal seeds; a validated input schema with stable feature order; and identical platform settings. A container recipe (base image pinned by digest, dependencies installed from a hash-locked file) is provided in the repository.
 
-The guarantee does not cover different data (adding or correcting rows may change the rule set), a different software stack or CPU, or dependence on row order where underlying algorithms break ties by position. Determinism makes re-execution auditable; robustness to small data changes, which governs whether explanations survive retraining, is a distinct property.
+The guarantee does not cover different data (adding or correcting rows may change the rule set), a different software stack or CPU, or dependence on row order where underlying algorithms break ties by position. Identity across machines has not been tested: all results in this report come from one x86-64 machine (Intel Xeon, 2.1\,GHz), and runs on another CPU type, even with the same container, may differ in the last bits of floating-point results. Determinism makes re-execution auditable; robustness to small data changes, which governs whether explanations survive retraining, is a distinct property.
 
 \section{Experiments}\label{sec:exp}
 
-\paragraph{Data and protocol.} We use German Credit (UCI, 1{,}000 rows), Taiwan Credit (UCI; a random subsample of 5{,}000 of the 30{,}000 rows, seed 42, to bound runtime) and HMEQ (5{,}960 rows). Each dataset is split once into 80\% training and 20\% test data (stratified, seed 42). Missing values are imputed (median, or mode for categorical columns), categorical columns are ordinally encoded and all columns are standardised. All preprocessing statistics are fitted on the training split. RuleFit (imodels, 250 trees of depth 4, at most 50 rules) is fitted 100 times with \texttt{random\_state} $=0,\dots,99$. \textsc{ExpertRuleFit} (benchmark settings, solver tolerance $10^{-6}$) is fitted three times with \texttt{random\_state} $=0,1,2$, each run in a separate process; since the seed is ignored by design, more runs would repeat the same computation, and we instead check that the three runs agree bit for bit, comparing a hash of the rule set and the SHA-256 digest of the test-set probabilities. A run's rule set is the set of terms with non-zero coefficient; we report how many RuleFit runs share the most frequent rule set and the Jaccard similarity averaged over all pairs of runs. All runs use the pinned software stack (Python 3.11.18, scikit-learn 1.7.2, NumPy 2.4.6, imodels 3.0.4, single-threaded), in the container published with the code. An earlier version of this table fitted the preprocessing on the full dataset before the split and used an unpinned stack.
+\paragraph{Data and protocol.} We use German Credit (UCI, 1{,}000 rows), Taiwan Credit (UCI; a random subsample of 5{,}000 of the 30{,}000 rows, seed 42, to bound runtime) and HMEQ (5{,}960 rows). Each dataset is split once into 80\% training and 20\% test data (stratified, seed 42). Missing values are imputed (median, or mode for categorical columns), categorical columns are ordinally encoded and all columns are standardised. All preprocessing statistics are fitted on the training split. RuleFit (imodels, 250 trees of depth 4, at most 50 rules) is fitted 100 times with \texttt{random\_state} $=0,\dots,99$. \textsc{ExpertRuleFit} is fitted with its default settings and no expert rules, except for the solver tolerance: the benchmark uses $10^{-6}$ instead of the library default $10^{-4}$, a setting inherited from the original benchmark script and kept so that the rerun changes only the preprocessing and the software stack. It is fitted three times with \texttt{random\_state} $=0,1,2$, each run in a separate process; since the seed is ignored by design, more runs would repeat the same computation, and we instead check that the three runs agree bit for bit, comparing a hash of the rule set and the SHA-256 digest of the test-set probabilities. A run's rule set is the set of terms with non-zero coefficient; we report how many RuleFit runs share the most frequent rule set and the Jaccard similarity averaged over all pairs of runs. All runs use the pinned software stack (Python 3.11.18, scikit-learn 1.7.2, NumPy 2.4.6, imodels 3.0.4, single-threaded), in a container built from the recipe in the repository. An earlier version of this table fitted the preprocessing on the full dataset before the split and used an unpinned stack.
 
 \begin{table}[h]
 \centering\small
-\caption{Seed sensitivity and discrimination (single train/test split). RuleFit: 100 seeds; AUC is the mean over seeds. \textsc{ExpertRuleFit}: three runs with bitwise-identical output.}
+\caption{Seed sensitivity and discrimination (single train/test split, no expert rules). RuleFit: 100 seeds; AUC is the mean over seeds. \textsc{ExpertRuleFit}: three runs with bitwise-identical output.}
 \label{tab:results}
-\begin{tabular}{@{}lcccc@{}}
+\begin{tabular}{@{}lccccc@{}}
 \toprule
- & \multicolumn{2}{c}{Runs with the most frequent rule set} & \multicolumn{2}{c}{Test AUC}\\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}
-Dataset & RuleFit & \textsc{ExpertRuleFit} & RuleFit & \textsc{ExpertRuleFit}\\
+ & \multicolumn{3}{c}{Rule sets} & \multicolumn{2}{c}{Test AUC}\\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}
+ & \multicolumn{2}{c}{RuleFit (100 seeds)} & \textsc{ExpertRuleFit} & & \\
+Dataset & distinct & most frequent & identical runs & RuleFit & \textsc{ExpertRuleFit}\\
 \midrule
-German Credit & 1/100 & 3/3 & 0.788 ($\pm$0.009) & 0.790\\
-Taiwan Credit & 1/100 & 3/3 & 0.764 ($\pm$0.003) & 0.769\\
-HMEQ & 1/100 & 3/3 & 0.903 ($\pm$0.003) & 0.903\\
+German Credit & 100 & 1/100 & 3/3 & 0.788 ($\pm$0.009) & 0.790\\
+Taiwan Credit & 100 & 1/100 & 3/3 & 0.764 ($\pm$0.003) & 0.769\\
+HMEQ & 100 & 1/100 & 3/3 & 0.903 ($\pm$0.003) & 0.903\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Mean pairwise Jaccard similarity of RuleFit rule sets is 0.045 (German Credit), 0.058 (Taiwan Credit), 0.036 (HMEQ); on each dataset the 100 RuleFit runs produced 100 distinct rule sets. The three \textsc{ExpertRuleFit} runs per dataset produced the same rule set (43, 42, 48 terms) and the same probabilities. One \textsc{ExpertRuleFit} fit took between about 10 minutes (German Credit) and 3.5 hours (HMEQ) single-threaded, against seconds for RuleFit.
+Mean pairwise Jaccard similarity of RuleFit rule sets is 0.045 (German Credit), 0.058 (Taiwan Credit), 0.036 (HMEQ). The three \textsc{ExpertRuleFit} runs per dataset produced the same rule set (43, 42, 48 terms) and the same probabilities. One \textsc{ExpertRuleFit} fit took between about 10 minutes (German Credit) and 3.5 hours (HMEQ) single-threaded, against seconds for RuleFit.
 
-\paragraph{What the results show.} RuleFit's output depends heavily on the seed, so a single run cannot be reproduced without recording every seed. \textsc{ExpertRuleFit} removes this dependence without loss of discrimination on these datasets.
+\paragraph{What the results show.} Table~\ref{tab:results} uses no expert rules: it compares rule generation and selection only. RuleFit's output depends heavily on the seed, so a single run cannot be reproduced without recording every seed. \textsc{ExpertRuleFit} removes this dependence without loss of discrimination on these datasets.
 
 \paragraph{What they do not show.} Because \textsc{ExpertRuleFit} ignores \texttt{random\_state}, varying it does not change the computation: identical output across runs follows from the design and is not an empirical finding about stability; the three runs only confirm that the implementation is deterministic within the execution envelope. The comparison sets determinism against seed sensitivity. AUC is also reported on a single split without confidence intervals.
 
-\paragraph{Penalty-weight sensitivity (German Credit).} We fitted \textsc{ExpertRuleFit} on the same split for $w_c\in\{10^{-8},10^{-6},10^{-4},10^{-2},1\}$ and $w_o\in\{0.1,0.3,1\}$ on the pinned software stack. The expert rules are standard credit-risk criteria chosen by the author, not rules supplied by domain experts: a confirmatory rule ``checking account below 0~DM'' and an optional rule ``duration above 24 months'', both expected to raise the default probability. Saga raised 360--361 convergence warnings per fit at $w_c=10^{-8}$, 66--69 at $10^{-6}$, 3--6 at $10^{-4}$ and none at $10^{-2}$ or $1$. Test AUC was 0.753--0.756 at $w_c=10^{-8}$ and 0.784--0.797 for all larger values, and fits at $10^{-2}$ took about a third of the time of fits at $10^{-4}$. The confirmatory coefficient had the expected positive sign only at $w_c\le 10^{-6}$, in fits that had not converged; this agreement is an artefact of non-convergence. In every converged fit the coefficient was negative: the model also retains the ordinal checking-status variable and tree rules containing the same condition, which carry the effect, and the sign check flags the contradiction. The optional rule was retained in every fit. These results cover one dataset and one split.
+\paragraph{Penalty-weight sensitivity (German Credit).} We fitted \textsc{ExpertRuleFit} on the same split for $w_c\in\{10^{-8},10^{-6},10^{-4},10^{-2},1\}$ and $w_o\in\{0.1,0.3,1\}$ on the pinned software stack, with the library's default solver tolerance ($10^{-4}$). The expert rules are standard credit-risk criteria chosen by the author, not rules supplied by domain experts: a confirmatory rule ``checking account below 0~DM'' and an optional rule ``duration above 24 months'', both expected to raise the default probability. Saga raised 360--361 convergence warnings per fit at $w_c=10^{-8}$, 66--69 at $10^{-6}$, 3--6 at $10^{-4}$ and none at $10^{-2}$ or $1$. Test AUC was 0.753--0.756 at $w_c=10^{-8}$ and 0.784--0.797 for all larger values, and fits at $10^{-2}$ took about a third of the time of fits at $10^{-4}$. The confirmatory coefficient had the expected positive sign only at $w_c\le 10^{-6}$, in fits that had not converged; this agreement is an artefact of non-convergence. In every converged fit the coefficient was negative: the model also retains the ordinal checking-status variable and tree rules containing the same condition, which carry the effect, and the sign check flags the contradiction. The optional rule was retained in every fit. These results cover one dataset and one split.
 
 \paragraph{Proposed perturbation protocol.} To measure stability under data perturbation we will: (1) draw 100 bootstrap or 90\% subsamples of the training set; (2) fit RuleFit with a fixed seed and \textsc{ExpertRuleFit} on each; (3) report mean pairwise Jaccard similarity and per-rule selection frequencies, as in \citet{benard2021}; (4) report AUC with confidence intervals over repeated splits; (5) include SIRUS and $\ell_2$-penalised logistic regression as baselines. These results are not yet available.
 
 \section{Limitations}\label{sec:limits}
 
 \begin{itemize}
-  \item \textbf{Stability under perturbation is unmeasured} (Section~\ref{sec:exp}).
-  \item \textbf{No sign constraint.} A confirmatory rule is guaranteed to stay in the model, not to keep the direction the expert intended. A declared expected sign is checked and a contradiction is flagged, but the coefficient is not constrained. On German Credit the contradiction occurred in every converged fit (Section~\ref{sec:exp}); a sign-constrained, unpenalised confirmatory block is the next planned change.
+  \item \textbf{Stability under perturbation is unmeasured} (Section~\ref{sec:exp}); identity across machines is untested (Section~\ref{sec:repro}).
+  \item \textbf{No sign constraint.} A confirmatory rule is guaranteed to be included (Definition~\ref{def:inclusion}), not to keep the direction the expert intended. A declared expected sign is checked and a contradiction is flagged, but the coefficient is not constrained. On German Credit the contradiction occurred in every converged fit (Section~\ref{sec:exp}); a sign-constrained, unpenalised confirmatory block is the next planned change.
   \item \textbf{Weakly penalised rules can absorb signal.} With a small $w_c$, a confirmatory rule correlated with tree rules can take their weight; a weak or wrong expert rule then shapes the model. The diagnostics report this case; they do not correct it.
   \item \textbf{Calibration not evaluated.} Penalised logistic outputs are often too conservative; optional post-hoc calibration exists but reliability curves and Brier scores have not been reported.
   \item \textbf{Coarse frequency estimate.} With $B=10$, the 80\% threshold means 8 of 10 draws; the draws are fixed, not resampled.
+  \item \textbf{Runtime.} One fit runs about 2{,}100 saga fits, single-threaded to stay within the execution envelope; with the benchmark tolerance it took between about 10 minutes (German Credit, 800 training rows) and 3.5 hours (HMEQ, 4{,}768 rows). The cost has not been profiled.
   \item \textbf{Scope.} Binary classification only; evidence limited to three credit datasets of moderate size; rule readability (up to four conditions) not tested with users.
   \item \textbf{Review.} Single author, internal code review only; the implementation was written with AI assistance.
 \end{itemize}
@@ -184,7 +189,7 @@ Three conditions precede any pilot. First, \emph{selection bias}: outcomes exist
 
 \section{Conclusion and future work}
 
-\textsc{ExpertRuleFit} makes rule-ensemble outputs exactly reproducible and keeps expert-imposed rules, at no loss of AUC on three credit datasets. Its central empirical claim so far is determinism, not stability under data change. Future work, in order of priority: the perturbation protocol of Section~\ref{sec:exp} with SIRUS as baseline; sign-constrained confirmatory rules via bounded optimisation; a principled choice of the confirmatory weight; more bootstrap draws or error-controlled thresholds \citep{shah2013}; calibration assessment; and handling of selection bias when labels come only from past audits.
+\textsc{ExpertRuleFit} makes rule-ensemble outputs exactly reproducible, at no loss of AUC on three credit datasets in a benchmark without expert rules, and includes expert-imposed rules in the sense of Definition~\ref{def:inclusion}. The effect of expert rules on discrimination has been examined only in the German Credit sensitivity study, and their fitted sign can contradict the expert. Its central empirical claim so far is determinism, not stability under data change. Future work, in order of priority: sign-constrained, unpenalised confirmatory rules via bounded optimisation; the perturbation protocol of Section~\ref{sec:exp} with SIRUS as baseline; profiling and reducing the runtime (e.g.\ bootstraps in parallel processes, which preserves determinism) and testing identity across machines; more bootstrap draws or error-controlled thresholds \citep{shah2013}; calibration assessment; and handling of selection bias when labels come only from past audits.
 
 \paragraph{Code and data availability.} Code, tests, the validation script and a container recipe are at \url{https://github.com/hdjebar/ExpertRuleFit}. Datasets are public.
 
