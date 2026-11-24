@@ -143,6 +143,13 @@ jobs:
             erf-pinned python experiments/table1.py --datasets ${{ matrix.dataset }} \
               --erf-runs 3 --jobs 3 --out out/table1
 
+      - name: Check the reused fits on this machine (RuleFit seeds 0-4, ERF as 0.8.0)
+        if: env.EXPERIMENT == 'table1'
+        run: |
+          docker run --rm --network none -v "$PWD":/work -w /work -e PYTHONPATH=/work \
+            erf-pinned python experiments/check_reuse.py --dataset ${{ matrix.dataset }} \
+              --out out/reuse
+
       - uses: actions/upload-artifact@v4
         with:
           name: part-${{ matrix.dataset }}-${{ matrix.k_start }}
@@ -189,6 +196,7 @@ jobs:
             done
           else
             cat parts/*/table1/fits.jsonl > "$dest/fits.jsonl"
+            cp parts/*/reuse/reuse_check_*.json "$dest/" || true
             docker run --rm --network none -v "$PWD":/work -w /work -e PYTHONPATH=/work \
               erf-pinned python experiments/table1.py --datasets $DATASETS \
                 --erf-runs 3 --out "$dest" --summarize-only
