@@ -22,11 +22,11 @@ disappear at retraining for reasons unrelated to the data; and criteria
 required by regulation or by experts can be removed by the penalty when
 their signal is weak or collinear with other rules.
 
-Expert RuleFit , introduced in an MSc thesis with an R implementation,
-extends RuleFit with confirmatory expert rules and linear terms that are
-exempt from penalisation, so that they always enter the model, and
-optional ones with an adjustable penalty factor. The
-confirmatory/optional distinction, its terminology and the penalty
+Expert RuleFit , introduced in a master’s thesis with an R
+implementation, extends RuleFit with confirmatory expert rules and
+linear terms that are exempt from penalisation, so that they always
+enter the model, and optional ones with an adjustable penalty factor.
+The confirmatory/optional distinction, its terminology and the penalty
 exemption are theirs; this report uses the same name for a Python
 implementation and does not claim them.
 
@@ -224,13 +224,12 @@ refit remains available as `confirmatory_mode="refit"`.
 
 The guarantee is bitwise determinism within an execution envelope: the
 same set of training rows, on the same software stack and *the same CPU
-model*, yields the same rule set and predictions. Row and column order
-do not matter: rows are sorted and, since version 0.8.1, columns are
-sorted by name before fitting. The envelope requires pinned versions of
-Python, NumPy, scikit-learn and imodels; single-threaded BLAS and
-OpenMP; the fixed internal seeds; and the same CPU model. A container
-recipe (base image pinned by digest, dependencies installed from a
-hash-locked file) is provided in the repository.
+model*, yields the same rule set and predictions. Rows and (since 0.8.1)
+columns are sorted before fitting, so their order does not matter. The
+envelope requires pinned versions of Python, NumPy, scikit-learn and
+imodels, single-threaded BLAS and OpenMP, and the fixed internal seeds.
+A container recipe (base image pinned by digest, dependencies installed
+from a hash-locked file) is provided in the repository.
 
 #### Why not log the seed?
 
@@ -253,15 +252,11 @@ among many, which is the stability question of
 Section <a href="#sec:exp" data-reference-type="ref"
 data-reference="sec:exp">5</a>.
 
-The guarantee does not cover different data, a different software stack,
-or a different CPU model. We tested the last point with the same
-container on three CPU models (Intel Xeon; AMD EPYC 9V45 and 7763): the
-rule sets and the test AUC were identical, but the predicted
-probabilities differed in their last bits, presumably because the BLAS
-library selects CPU-specific kernels. Pinning the BLAS kernel is left to
-future work. Before 0.8.1, column order also changed the fitted model;
-columns are now sorted by name, and any permutation of the columns gives
-bitwise-identical output.
+The guarantee does not cover different data, software stack or CPU
+model. On three CPU models (Intel Xeon; AMD EPYC 9V45, 7763) the same
+container gave identical rule sets and AUC but probabilities differing
+in their last bits, presumably from CPU-specific BLAS kernels; pinning
+the kernel is future work.
 
 # Experiments
 
@@ -422,33 +417,42 @@ come only from past audits.
 
 99 Bénard, C., Biau, G., da Veiga, S. and Scornet, E. (2021). SIRUS:
 Stable and interpretable RUle set for classification. *Electronic
-Journal of Statistics*, 15(1), 427–505. Ebner, L. (n.d.). Expert RuleFit
-– Complementing rule ensembles with expert knowledge. MSc thesis. R
-implementation (package ERF): <https://github.com/LuisaEbner/ERF>,
-accessed 24 November 2026. Fokkema, M. (2020). Fitting prediction rule
-ensembles with R package pre. *Journal of Statistical Software*, 92(12).
-Friedman, J. H. and Popescu, B. E. (2008). Predictive learning via rule
-ensembles. *Annals of Applied Statistics*, 2(3), 916–954. Kanamori, K.
-(2023). Learning locally interpretable rule ensemble. In *ECML PKDD*.
-Liu, B. and Mazumder, R. (2023). FIRE: An optimization approach for fast
-interpretable rule extraction. In *KDD*. Lou, Y., Caruana, R., Gehrke,
-J. and Hooker, G. (2013). Accurate intelligible models with pairwise
-interactions. In *KDD*. Marx, C., Calmon, F. and Ustun, B. (2020).
-Predictive multiplicity in classification. In *ICML*, PMLR 119,
-6765–6774. Meinshausen, N. and Bühlmann, P. (2010). Stability selection.
-*Journal of the Royal Statistical Society B*, 72(4), 417–473. Nalenz, M.
-and Augustin, T. (2022). Compressed rule ensemble. In *AISTATS*, PMLR
-151. Nori, H., Jenkins, S., Koch, P. and Caruana, R. (2019).
-InterpretML: A unified framework for machine learning interpretability.
-arXiv:1909.09223. Rudin, C. et al. (2024). Amazing things come from
-having many good models. In *ICML*. Shah, R. D. and Samworth, R. J.
-(2013). Variable selection with error control: another look at stability
-selection. *Journal of the Royal Statistical Society B*, 75(1), 55–80.
-Singh, C., Nasseri, K., Tan, Y. S., Tang, T. and Yu, B. (2021). imodels:
-a Python package for fitting interpretable models. *Journal of Open
-Source Software*, 6(61). Tan, Y. S., Singh, C., Nasseri, K., Agarwal, A.
-and Yu, B. (2025). Fast interpretable greedy-tree sums. *PNAS*. Zou, H.
-(2006). The adaptive lasso and its oracle properties. *Journal of the
-American Statistical Association*, 101(476), 1418–1429.
+Journal of Statistics*, 15(1), 427–505. Ebner, L. (2021). Expert RuleFit
+– Complementing rule ensembles with expert knowledge. Master’s thesis,
+Faculty of Science, Vrije Universiteit Amsterdam. R package:
+<https://github.com/LuisaEbner/ERF>. Ebner, L., Nalenz, M., ten Teije,
+A., van Harmelen, F. and Augustin, T. (2021). Expert RuleFit:
+Complementing rule ensembles with expert knowledge. In 19th
+International Conference on Artificial Intelligence in Medicine, KR4HC
+Workshop. Reprinted in , pp. 117–130. Fokkema, M. (2020). Fitting
+prediction rule ensembles with R package pre. *Journal of Statistical
+Software*, 92(12). Friedman, J. H. and Popescu, B. E. (2008). Predictive
+learning via rule ensembles. *Annals of Applied Statistics*, 2(3),
+916–954. Kanamori, K. (2023). Learning locally interpretable rule
+ensemble. In *ECML PKDD*. Liu, B. and Mazumder, R. (2023). FIRE: An
+optimization approach for fast interpretable rule extraction. In *KDD*.
+Lou, Y., Caruana, R., Gehrke, J. and Hooker, G. (2013). Accurate
+intelligible models with pairwise interactions. In *KDD*. Marx, C.,
+Calmon, F. and Ustun, B. (2020). Predictive multiplicity in
+classification. In *ICML*, PMLR 119, 6765–6774. Meinshausen, N. and
+Bühlmann, P. (2010). Stability selection. *Journal of the Royal
+Statistical Society B*, 72(4), 417–473. Nalenz, M. (2021).
+Characterizing model uncertainty in ensemble learning – Towards more
+robust representation and learning of tree ensemble methods. Doctoral
+dissertation, LMU Munich. <https://edoc.ub.uni-muenchen.de/30379>.
+Nalenz, M. and Augustin, T. (2022). Compressed rule ensemble. In
+*AISTATS*, PMLR 151. Nori, H., Jenkins, S., Koch, P. and Caruana, R.
+(2019). InterpretML: A unified framework for machine learning
+interpretability. arXiv:1909.09223. Rudin, C. et al. (2024). Amazing
+things come from having many good models. In *ICML*. Shah, R. D. and
+Samworth, R. J. (2013). Variable selection with error control: another
+look at stability selection. *Journal of the Royal Statistical Society
+B*, 75(1), 55–80. Singh, C., Nasseri, K., Tan, Y. S., Tang, T. and Yu,
+B. (2021). imodels: a Python package for fitting interpretable models.
+*Journal of Open Source Software*, 6(61). Tan, Y. S., Singh, C.,
+Nasseri, K., Agarwal, A. and Yu, B. (2025). Fast interpretable
+greedy-tree sums. *PNAS*. Zou, H. (2006). The adaptive lasso and its
+oracle properties. *Journal of the American Statistical Association*,
+101(476), 1418–1429.
 
 </div>

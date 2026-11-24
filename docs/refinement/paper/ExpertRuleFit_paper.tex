@@ -33,7 +33,7 @@ The selection step is unstable. Candidate rules are strongly correlated, and amo
 
 In regulated settings such as credit, insurance or tax administration this blocks deployment: a supervisor who re-runs the model must obtain the same output; a rule given as the reason for a score should not disappear at retraining for reasons unrelated to the data; and criteria required by regulation or by experts can be removed by the penalty when their signal is weak or collinear with other rules.
 
-Expert RuleFit \citep{ebner_erf}, introduced in an MSc thesis with an R implementation, extends RuleFit with confirmatory expert rules and linear terms that are exempt from penalisation, so that they always enter the model, and optional ones with an adjustable penalty factor. The confirmatory/optional distinction, its terminology and the penalty exemption are theirs; this report uses the same name for a Python implementation and does not claim them.
+Expert RuleFit \citep{ebner_erf,ebner2021ws}, introduced in a master's thesis \citep[p.~XII]{nalenz2021} with an R implementation, extends RuleFit with confirmatory expert rules and linear terms that are exempt from penalisation, so that they always enter the model, and optional ones with an adjustable penalty factor. The confirmatory/optional distinction, its terminology and the penalty exemption are theirs; this report uses the same name for a Python implementation and does not claim them.
 
 \paragraph{Contributions.}
 \begin{enumerate}
@@ -120,11 +120,11 @@ with $v_j=w_o$ for optional rules and 1 otherwise, no penalty on $C$, and $\lamb
 
 \section{Reproducibility guarantee}\label{sec:repro}
 
-The guarantee is bitwise determinism within an execution envelope: the same set of training rows, on the same software stack and \emph{the same CPU model}, yields the same rule set and predictions. Row and column order do not matter: rows are sorted and, since version 0.8.1, columns are sorted by name before fitting. The envelope requires pinned versions of Python, NumPy, scikit-learn and imodels; single-threaded BLAS and OpenMP; the fixed internal seeds; and the same CPU model. A container recipe (base image pinned by digest, dependencies installed from a hash-locked file) is provided in the repository.
+The guarantee is bitwise determinism within an execution envelope: the same set of training rows, on the same software stack and \emph{the same CPU model}, yields the same rule set and predictions. Rows and (since 0.8.1) columns are sorted before fitting, so their order does not matter. The envelope requires pinned versions of Python, NumPy, scikit-learn and imodels, single-threaded BLAS and OpenMP, and the fixed internal seeds. A container recipe (base image pinned by digest, dependencies installed from a hash-locked file) is provided in the repository.
 
 \paragraph{Why not log the seed?} Logging the seed, code and data hash makes one RuleFit run replayable, but not the choice of that run: in Table~\ref{tab:results}, 100 seeds gave 100 rule sets with nearly the same AUC (standard deviation at most 0.009). A modeller can keep the seed whose rules look best (``seed shopping''); the log shows only that seed. With \textsc{ExpertRuleFit} the seed has no effect: for given data, settings and software stack there is one model, and the remaining choices are settings recorded in the audit bundle. Row order is a second hidden choice of the same kind, because boosting subsamples and cross-validation folds index rows by position; the rows are therefore sorted before fitting, so that only the set of rows matters (Section~\ref{sec:exp}). Deriving internal seeds from a user seed would bring the free choice back; the fixed draw is still one draw among many, which is the stability question of Section~\ref{sec:exp}.
 
-The guarantee does not cover different data, a different software stack, or a different CPU model. We tested the last point with the same container on three CPU models (Intel Xeon; AMD EPYC 9V45 and 7763): the rule sets and the test AUC were identical, but the predicted probabilities differed in their last bits, presumably because the BLAS library selects CPU-specific kernels. Pinning the BLAS kernel is left to future work. Before 0.8.1, column order also changed the fitted model; columns are now sorted by name, and any permutation of the columns gives bitwise-identical output.
+The guarantee does not cover different data, software stack or CPU model. On three CPU models (Intel Xeon; AMD EPYC 9V45, 7763) the same container gave identical rule sets and AUC but probabilities differing in their last bits, presumably from CPU-specific BLAS kernels; pinning the kernel is future work.
 
 \section{Experiments}\label{sec:exp}
 
@@ -180,7 +180,8 @@ Building on Expert RuleFit \citep{ebner_erf}, \textsc{ExpertRuleFit} makes rule-
 
 \begin{thebibliography}{99}\small
 \bibitem[B{\'e}nard et~al.(2021)]{benard2021} B{\'e}nard, C., Biau, G., da~Veiga, S. and Scornet, E. (2021). SIRUS: Stable and interpretable RUle set for classification. \emph{Electronic Journal of Statistics}, 15(1), 427--505.
-\bibitem[Ebner(n.d.)]{ebner_erf} Ebner, L. (n.d.). Expert RuleFit -- Complementing rule ensembles with expert knowledge. MSc thesis. R implementation (package ERF): \url{https://github.com/LuisaEbner/ERF}, accessed 24~November~2026.
+\bibitem[Ebner(2021)]{ebner_erf} Ebner, L. (2021). Expert RuleFit -- Complementing rule ensembles with expert knowledge. Master's thesis, Faculty of Science, Vrije Universiteit Amsterdam. R package: \url{https://github.com/LuisaEbner/ERF}.
+\bibitem[Ebner et~al.(2021)]{ebner2021ws} Ebner, L., Nalenz, M., ten Teije, A., van Harmelen, F. and Augustin, T. (2021). Expert RuleFit: Complementing rule ensembles with expert knowledge. In 19th International Conference on Artificial Intelligence in Medicine, KR4HC Workshop. Reprinted in \citet{nalenz2021}, pp.~117--130.
 \bibitem[Fokkema(2020)]{fokkema2020} Fokkema, M. (2020). Fitting prediction rule ensembles with R package pre. \emph{Journal of Statistical Software}, 92(12).
 \bibitem[Friedman and Popescu(2008)]{friedman2008} Friedman, J.~H. and Popescu, B.~E. (2008). Predictive learning via rule ensembles. \emph{Annals of Applied Statistics}, 2(3), 916--954.
 \bibitem[Kanamori(2023)]{kanamori2023} Kanamori, K. (2023). Learning locally interpretable rule ensemble. In \emph{ECML PKDD}.
@@ -188,6 +189,7 @@ Building on Expert RuleFit \citep{ebner_erf}, \textsc{ExpertRuleFit} makes rule-
 \bibitem[Lou et~al.(2013)]{lou2013} Lou, Y., Caruana, R., Gehrke, J. and Hooker, G. (2013). Accurate intelligible models with pairwise interactions. In \emph{KDD}.
 \bibitem[Marx et~al.(2020)]{marx2020} Marx, C., Calmon, F. and Ustun, B. (2020). Predictive multiplicity in classification. In \emph{ICML}, PMLR 119, 6765--6774.
 \bibitem[Meinshausen and B{\"u}hlmann(2010)]{meinshausen2010} Meinshausen, N. and B{\"u}hlmann, P. (2010). Stability selection. \emph{Journal of the Royal Statistical Society B}, 72(4), 417--473.
+\bibitem[Nalenz(2021)]{nalenz2021} Nalenz, M. (2021). Characterizing model uncertainty in ensemble learning -- Towards more robust representation and learning of tree ensemble methods. Doctoral dissertation, LMU Munich. \url{https://edoc.ub.uni-muenchen.de/30379}.
 \bibitem[Nalenz and Augustin(2022)]{nalenz2022} Nalenz, M. and Augustin, T. (2022). Compressed rule ensemble. In \emph{AISTATS}, PMLR 151.
 \bibitem[Nori et~al.(2019)]{nori2019} Nori, H., Jenkins, S., Koch, P. and Caruana, R. (2019). InterpretML: A unified framework for machine learning interpretability. arXiv:1909.09223.
 \bibitem[Rudin et~al.(2024)]{rudin2024} Rudin, C. et~al. (2024). Amazing things come from having many good models. In \emph{ICML}.

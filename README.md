@@ -2,7 +2,7 @@
 
 ## Prior work and attribution
 
-**Expert RuleFit already exists, and the core idea of this library is theirs.** *Expert RuleFit* (ERF) was introduced by **Luisa Ebner** in her MSc thesis *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*, with an R implementation at [github.com/LuisaEbner/ERF](https://github.com/LuisaEbner/ERF). It extends RuleFit (Friedman & Popescu 2008) with expert knowledge in two groups:
+**Expert RuleFit already exists, and the core idea of this library is theirs.** *Expert RuleFit* (ERF) was introduced by **Luisa Ebner** in her master's thesis *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge* (Faculty of Science, Vrije Universiteit Amsterdam, 2021), co-supervised by Malte Nalenz, Frank van Harmelen and Thomas Augustin, and in the paper Ebner, Nalenz, ten Teije, van Harmelen & Augustin, "Expert RuleFit: Complementing Rule Ensembles with Expert Knowledge", *19th International Conference on Artificial Intelligence in Medicine, KR4HC Workshop* (2021), with an R implementation at [github.com/LuisaEbner/ERF](https://github.com/LuisaEbner/ERF). The paper is reprinted (pp. 117–130) and the method summarised (§3.1.3) in Malte Nalenz's doctoral dissertation (LMU Munich, 2021, [edoc.ub.uni-muenchen.de/30379](https://edoc.ub.uni-muenchen.de/30379); contributions declared on p. XII). It extends RuleFit (Friedman & Popescu 2008) with expert knowledge in two groups:
 
 - **confirmatory** expert rules and linear terms, exempt from penalisation, so they always enter the final model;
 - **optional** expert rules and linear terms, with an adjustable penalty factor (adaptive regularisation).
@@ -17,7 +17,7 @@ The *confirmatory / optional* terminology, the idea of exempting confirmatory ru
 4. **A conditioning analysis** of penalty weighting by column rescaling: very small weights make saga stop far from the optimum without a warning; standardisation and the weight choice that avoid it.
 5. Also: an optional bootstrap/subsample selection-frequency filter, data-driven interaction rules from EBM (optional, never confirmatory by default), and a stacked EBM + rules model.
 
-**Reproducible interpretable rule ensembles for regulated environments, building on Expert RuleFit (Ebner, MSc thesis; R package ERF).**
+**Reproducible interpretable rule ensembles for regulated environments, building on Expert RuleFit (Ebner 2021; Ebner et al. 2021).**
 
 ExpertRuleFit is a Python implementation of [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with Expert RuleFit's confirmatory and optional expert rules, made **deterministic** (same rules and predictions whatever the seed or row order, within the execution envelope below, which includes the CPU model) and with a **sign-constrained confirmatory block**. Integrates with [InterpretML](https://github.com/interpretml/interpret) Explainable Boosting Machines (EBM) to auto-discover interaction rules grounded in shape functions. Built for banking compliance under CSSF/EU AI Act.
 
@@ -31,7 +31,7 @@ The pipeline (defaults of version 0.8.1):
 
 0. **Canonical column and row order** — columns are sorted by feature name (`column_order="canonical"`, since 0.8.1), then training rows are sorted, so any permutation of the same rows or columns gives the same model (`row_order="canonical"`).
 1. **Fixed-seed rule generation** — a gradient-boosting ensemble with internal seed 42 (user `random_state` ignored). By default the candidates are the rules kept by imodels' RuleFit, **which runs its own L1 (Lasso) path and returns at most `max_rules` rules before ExpertRuleFit or the expert rules are involved**. `candidates="trees"` takes every distinct rule from the same trees instead, so selection happens only in the steps below.
-2. **Expert rule augmentation** — confirmatory and optional expert rules, as in Expert RuleFit (Ebner); optional rules get a reduced penalty.
+2. **Expert rule augmentation** — confirmatory and optional expert rules, as in Expert RuleFit (Ebner et al. 2021); optional rules get a reduced penalty.
 3. **Selection-frequency filter** — 10 elastic-net logistic fits on stratified half-samples drawn without replacement in complementary pairs (`resampling="subsample"`; the n-out-of-n bootstrap of earlier versions is `resampling="bootstrap"`); columns selected in ≥ 80 % of the fits are kept, confirmatory rules always. **Off by default since 0.8.0** (`selection="none"`): in the B1 study it made the model less stable (see Validation Results); `selection="bootstrap"` turns it on.
 4. **Final elastic-net CV** on the kept columns (standardised; coefficients reported on the original scale).
 5. **Confirmatory block** (`confirmatory_mode="constrained"`) — one convex problem: confirmatory coefficients unpenalised, bounded by their `expected_sign` when one is declared, free otherwise. A coefficient held at 0 by its bound is flagged (warning, audit bundle; `strict=True` raises). `confirmatory_mode="refit"` restores the earlier unpenalised fallback refit.
@@ -303,12 +303,12 @@ The prediction is: `P(y=1) = sigmoid(intercept + sum(coef_j * feature_j))`
 ## Two Guarantees
 
 1. **Reproducibility** — within the execution envelope (same set of rows, pinned stack, same CPU model; any column order since 0.8.1), same rules and same predictions whatever the seed or row order
-2. **Confirmatory rules kept in the model** (mechanism from Expert RuleFit, Ebner) — in the default constrained mode, a rule whose declared sign the data contradict is held at zero and flagged rather than given the wrong sign
+2. **Confirmatory rules kept in the model** (mechanism from Expert RuleFit, Ebner et al. 2021) — in the default constrained mode, a rule whose declared sign the data contradict is held at zero and flagged rather than given the wrong sign
 
 ## Features
 
 - **Seed-independent** — identical rules and predictions in every run (hash-checked on 3 datasets)
-- **Confirmatory rules** (Expert RuleFit, Ebner) — unpenalised, with optional sign bounds; `strict=True` raises if a bound is active
+- **Confirmatory rules** (Expert RuleFit, Ebner et al. 2021) — unpenalised, with optional sign bounds; `strict=True` raises if a bound is active
 - **EBM bridge** — discover interactions with InterpretML and add them as optional rules
 - **Dual stacking** — EBM + ExpertRuleFit + LogisticRegression meta-classifier, per-sample explanations
 - **Deterministic by design** — fixed internal seeds, single-threaded BLAS
@@ -405,7 +405,7 @@ Fixing every seed and the row order removes the run-to-run variation of RuleFit;
 For a comprehensive survey of recent research (2023--2026) on RuleFit extensions, competing rule-based methods, stability techniques, Rashomon sets, regulatory AI, and how ExpertRuleFit is positioned relative to the field, see **[docs/SOTA.md](docs/SOTA.md)**.
 
 **Key findings:**
-- **Direct precedent:** Expert RuleFit (Ebner) introduced confirmatory/optional expert rules in RuleFit (see *Prior work and attribution* above)
+- **Direct precedent:** Expert RuleFit (Ebner et al. 2021) introduced confirmatory/optional expert rules in RuleFit (see *Prior work and attribution* above)
 - **Related:** SIRUS (stability), FIRE/CRE (sparsity), stability selection (subsample filtering)
 - **Regulatory window:** ECB July 2025 Guide to Internal Models + EU AI Act Aug 2026 applicability align directly with ExpertRuleFit's design goals
 
