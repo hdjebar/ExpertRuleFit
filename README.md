@@ -19,7 +19,7 @@ The *confirmatory / optional* terminology, the idea of exempting confirmatory ru
 
 **Reproducible interpretable rule ensembles for regulated environments, building on Expert RuleFit (Ebner, MSc thesis; R package ERF).**
 
-ExpertRuleFit is a Python implementation of [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with Expert RuleFit's confirmatory and optional expert rules, made **deterministic** (same rules and predictions whatever the seed or row order, within the execution envelope below) and with a **sign-constrained confirmatory block**. Integrates with [InterpretML](https://github.com/interpretml/interpret) Explainable Boosting Machines (EBM) to auto-discover interaction rules grounded in shape functions. Built for banking compliance under CSSF/EU AI Act.
+ExpertRuleFit is a Python implementation of [RuleFit](https://arxiv.org/abs/0811.1679) (Friedman & Popescu 2008) with Expert RuleFit's confirmatory and optional expert rules, made **deterministic** (same rules and predictions whatever the seed or row order, within the execution envelope below, which includes the CPU model) and with a **sign-constrained confirmatory block**. Integrates with [InterpretML](https://github.com/interpretml/interpret) Explainable Boosting Machines (EBM) to auto-discover interaction rules grounded in shape functions. Built for banking compliance under CSSF/EU AI Act.
 
 ## The Problem
 
@@ -36,7 +36,7 @@ The pipeline (defaults of version 0.8.1):
 4. **Final elastic-net CV** on the kept columns (standardised; coefficients reported on the original scale).
 5. **Confirmatory block** (`confirmatory_mode="constrained"`) — one convex problem: confirmatory coefficients unpenalised, bounded by their `expected_sign` when one is declared, free otherwise. A coefficient held at 0 by its bound is flagged (warning, audit bundle; `strict=True` raises). `confirmatory_mode="refit"` restores the earlier unpenalised fallback refit.
 
-Guaranteed reproducible within a deterministic execution envelope: **pinned dependency versions, single-threaded BLAS/OpenMP, fixed random seeds, validated input schema with stable feature order, and consistent platform/runtime settings ⇒ identical rule set and identical predictions**.
+Guaranteed reproducible within a deterministic execution envelope: **pinned dependency versions, single-threaded BLAS/OpenMP, fixed random seeds, the same CPU model, and consistent platform/runtime settings ⇒ identical rule set and identical predictions**. Row and column order are canonicalised (any order of the same rows and columns gives the same model). On a *different* CPU model the rule set and AUC were identical in our tests, but the probabilities differed in their last bits (three CPU models, FINDINGS §20); pinning the BLAS kernel is planned (phase C).
 
 > **Container deployment:** For a step-by-step guide to enforcing this guarantee via Docker (pinned digests, locked wheels, deterministic numerics, schema validation, auditable fingerprints), see **[docs/REPRODUCIBILITY_CONTAINERS.md](docs/REPRODUCIBILITY_CONTAINERS.md)**.
 
