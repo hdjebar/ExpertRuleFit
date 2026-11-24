@@ -22,13 +22,14 @@ disappear at retraining for reasons unrelated to the data; and criteria
 required by regulation or by experts can be removed by the penalty when
 their signal is weak or collinear with other rules.
 
-Expert RuleFit , introduced in an MSc thesis with an R implementation,
-extends RuleFit with confirmatory expert rules and linear terms that are
-exempt from penalisation, so that they always enter the model, and
-optional ones with an adjustable penalty factor. The
-confirmatory/optional distinction, its terminology and the penalty
-exemption are theirs; this report uses the same name for a Python
-implementation and does not claim them.
+Expert RuleFit , introduced in an MSc thesis co-supervised by M. Nalenz,
+F. van Harmelen and T. Augustin , with an R implementation, extends
+RuleFit with confirmatory expert rules and linear terms that are exempt
+from penalisation, so that they always enter the model, and optional
+ones with an adjustable penalty factor. The confirmatory/optional
+distinction, its terminology and the penalty exemption are theirs; this
+report uses the same name for a Python implementation and does not claim
+them.
 
 #### Contributions.
 
@@ -434,7 +435,11 @@ interactions. In *KDD*. Marx, C., Calmon, F. and Ustun, B. (2020).
 Predictive multiplicity in classification. In *ICML*, PMLR 119,
 6765–6774. Meinshausen, N. and Bühlmann, P. (2010). Stability selection.
 *Journal of the Royal Statistical Society B*, 72(4), 417–473. Nalenz, M.
-and Augustin, T. (2022). Compressed rule ensemble. In *AISTATS*, PMLR
+(2021). Characterizing model uncertainty in ensemble learning – Towards
+more robust representation and learning of tree ensemble methods.
+Doctoral dissertation, Faculty of Mathematics, Computer Science and
+Statistics, LMU Munich. <https://edoc.ub.uni-muenchen.de/30379>. Nalenz,
+M. and Augustin, T. (2022). Compressed rule ensemble. In *AISTATS*, PMLR
 151. Nori, H., Jenkins, S., Koch, P. and Caruana, R. (2019).
 InterpretML: A unified framework for machine learning interpretability.
 arXiv:1909.09223. Rudin, C. et al. (2024). Amazing things come from

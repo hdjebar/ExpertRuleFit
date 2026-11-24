@@ -1,7 +1,7 @@
 # Claims policy — what can be said until new results exist
 
 ## P0 — prior work (23/11/2026, binding)
-- The confirmatory/optional expert-rule mechanism, its terminology and the penalty exemption for confirmatory rules come from **Expert RuleFit** (Luisa Ebner, MSc thesis *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*; R package github.com/LuisaEbner/ERF). Cite only the thesis and the R package. Any public text that describes "keeping the expert's rules" must say the library builds on Expert RuleFit (Ebner) and must not present that mechanism as our own.
+- The confirmatory/optional expert-rule mechanism, its terminology and the penalty exemption for confirmatory rules come from **Expert RuleFit** (Luisa Ebner, MSc thesis *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*; R package github.com/LuisaEbner/ERF). Cite the thesis and the R package; as a second, verifiable source, Nalenz (2021), LMU Munich doctoral dissertation (edoc.ub.uni-muenchen.de/30379; p. XII and §3.1.3). No workshop or proceedings citation. Any public text that describes "keeping the expert's rules" must say the library builds on Expert RuleFit (Ebner) and must not present that mechanism as our own.
 - Our own contributions, as they may be described: determinism by design with canonical row order; the sign-constrained confirmatory block; diagnostics and SHA-256 fingerprints; the conditioning analysis of penalty weighting by column rescaling.
 - The library name is unchanged pending the author's decision.
 

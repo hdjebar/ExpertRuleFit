@@ -47,3 +47,10 @@ Rule: no reference enters the paper until its title, authors, venue and year are
 | Node Harvest | rule-based method (likely Meinshausen 2010, AoAS) | verify |
 | MNAM | monotonic neural additive models | verify |
 | HELOC, GMSC | credit datasets (FICO xML challenge; Kaggle Give Me Some Credit) | check licences |
+
+## Checked 24/11/2026
+
+| Reference | Status | Source opened |
+|---|---|---|
+| Ebner, L. (n.d.), *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*, MSc thesis | title and degree verified | ERF README (github.com/LuisaEbner/ERF, branch master). University and year appear only in the reprinted workshop paper (Nalenz 2021, p. 129: VU Amsterdam, 2021); kept as "n.d." by the author's decision |
+| Nalenz, M. (2021), doctoral dissertation, LMU Munich, edoc.ub.uni-muenchen.de/30379 | verified | PDF supplied by the author (SHA-256 bbdf0c68…319e): title page, p. XII, §3.1.3 |

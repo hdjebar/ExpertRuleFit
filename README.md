@@ -2,7 +2,7 @@
 
 ## Prior work and attribution
 
-**Expert RuleFit already exists, and the core idea of this library is theirs.** *Expert RuleFit* (ERF) was introduced by **Luisa Ebner** in her MSc thesis *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*, with an R implementation at [github.com/LuisaEbner/ERF](https://github.com/LuisaEbner/ERF). It extends RuleFit (Friedman & Popescu 2008) with expert knowledge in two groups:
+**Expert RuleFit already exists, and the core idea of this library is theirs.** *Expert RuleFit* (ERF) was introduced by **Luisa Ebner** in her MSc thesis *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*, co-supervised by Malte Nalenz, Frank van Harmelen and Thomas Augustin, with an R implementation at [github.com/LuisaEbner/ERF](https://github.com/LuisaEbner/ERF). The method is also summarised in Malte Nalenz's doctoral dissertation (LMU Munich, 2021, [edoc.ub.uni-muenchen.de/30379](https://edoc.ub.uni-muenchen.de/30379), §3.1.3 and the declaration of contributions on p. XII). It extends RuleFit (Friedman & Popescu 2008) with expert knowledge in two groups:
 
 - **confirmatory** expert rules and linear terms, exempt from penalisation, so they always enter the final model;
 - **optional** expert rules and linear terms, with an adjustable penalty factor (adaptive regularisation).
