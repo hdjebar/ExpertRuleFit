@@ -1,156 +1,124 @@
 # Session handoff — ExpertRuleFit refinement
 
-**Written:** Tue 24/11/2026, 00:15 (Europe/Luxembourg).
+**Written:** Tue 24/11/2026, about 02:00 (Europe/Luxembourg). Replaces the handoff of 24/11 00:15.
 
 ## Repository state
 
 | Item | Value |
 |---|---|
-| Repo | `hdjebar/ExpertRuleFit` |
-| `main` | `9052604` — merge of PR #15 (merged 23/11/2026 23:49) |
-| `refinement/phase-a` | `8dd35c5` — fully contained in `main`; can be deleted |
-| `claude/review-codebase-yYi5P` | `86b0ace` — older branch, not from this work; untouched |
-| Open PRs | none (PR #15 merged) |
-| Tags | none (v0.8.0 not tagged yet) |
-| Package version | 0.8.0 (`expertrulefit/_version.py`) |
-| Tests | 104 passed on the pinned image at `4588f20` |
-| CI on `main` | **failing**. `ruff format --check` fails, and Python 3.9 is not available on the Ubuntu 26.04 runner, which cancels the other test jobs. It already failed before this work (runs of 22/02/2026). See pending item 3. |
-| Uncommitted work | none (only LaTeX build files, which are not tracked) |
+| `main` | `ec79250`: PR #16 (Ebner citation) merged on top of PR #17 (CI fix, `0d997f8`). Version 0.8.0. CI green (lint, Python 3.10–3.12). |
+| Tag `v0.8.0` | Created on `ec79250` in the session, but **the push was refused** (HTTP 403 from the session's git proxy). The author must push it: `git tag -a v0.8.0 ec79250 -m "ExpertRuleFit 0.8.0" && git push origin v0.8.0`. |
+| Open PR | #18 `feat/columns-calibration` (draft): 0.8.1, decisions (c) and (d), the experiments workflow, and the Table 1 0.8.1 results. |
+| Experiment branches | `run/b1-v081` and `run/table1-v081` start `.github/workflows/experiments.yml` on push. Results are committed by the workflow to `results/b1-v081` (pending) and `results/table1-v081` (done, `c88f961`). |
+| Merged branches | `fix/ebner-citation`, `fix/ci` and `refinement/phase-a` can be deleted. |
+| Tests | 124 passed on the pinned image at PR #18 (104 on `main`). |
 
-## Done in this work (PR #15, all on `main`)
+## Done in this session
 
-Hashes are those on GitHub.
+1. **Ebner citation** (PR #16):
+   - The paper, README, CLAIMS_POLICY, FINDINGS §14 and ACTION_PLAN cite only L. Ebner's MSc thesis *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge* and the R package github.com/LuisaEbner/ERF.
+   - The title and "MSc thesis" were read from the ERF README (branch `master`). University, supervisors and year are not stated there, and the university repositories were unreachable, so they are not given ("n.d.").
+   - The archived text of review 4 is unchanged.
+2. **CI** (PR #17):
+   - `ubuntu-24.04` runner.
+   - Python 3.9 dropped and `requires-python >= 3.10`: current imodels cannot be imported on 3.9.
+   - `six` declared as a dependency (imodels imports it without declaring it).
+   - ruff pinned to 0.17.6 with an explicit rule set, then `ruff format` and the safe fixes. Fingerprints unchanged.
+3. **Decisions (a)–(d)**, taken by the author on 24/11 and recorded in FINDINGS §19:
+   - **(a)** Keep the name.
+   - **(b)** Keep `candidates="rulefit"`; the B1 `erf_trees` arm decides.
+   - **(c)** `column_order="canonical"` by default. Columns are sorted by `str(name)`, recorded in the audit bundle and in `fingerprint()["schema_sha256"]`, and a permutation test is included. Default outputs changed, hence **0.8.1**.
+   - **(d)** `calibration="sigmoid"` allowed in constrained mode: Platt scaling on out-of-fold log-odds of the same block, a > 0, so the log-odds stay additive. Isotonic still raises.
+4. **Experiments on GitHub Actions** (`.github/workflows/experiments.yml`):
+   - The data job fetches each dataset once, with retries (the HMEQ host returned 429), and records SHA-256 sums.
+   - One job per (dataset, subsample index), in the pinned image with `--network none`.
+   - Results are committed to `results/<run>`.
+5. **Table 1 under 0.8.1** (FINDINGS §20, `experiments/results/table1_v081/`):
+   - ERF AUC 0.798 / 0.763 / 0.904 (German / Taiwan / HMEQ) against RuleFit means of 0.788 / 0.764 / 0.903.
+   - 3/3 identical runs on every dataset; 49 / 38 / 33 terms.
+6. **Determinism across machines** (FINDINGS §20):
+   - Within one machine: bitwise identical.
+   - Across three CPU models (Intel Xeon, AMD EPYC 9V45, EPYC 7763): rule sets identical and AUC bit-identical, but the probability bytes differ.
+   - The reused 0.8.0 RuleFit fits are valid (same rules and AUC on the new machine).
 
-- **Phase A and the standardisation fix (0.7.0):**
-  - A1: EBM rules are optional by default.
-  - A2: sign check and absorption diagnostics.
-  - Internal standardisation; `confirmatory_penalty` default 1e-2. The cause was saga's step size, which shrinks with tiny weights and lets it stop early without a warning (FINDINGS §1–8).
-  - Benchmark scaler fitted on the training split only.
-  - Pinned `docker/` stack.
-  - B3 weight grid on German.
-- **Review 3:**
-  - `7b5a81e` pack sync
-  - `3ab6ce3` D1 (seed shopping, paper §4)
-  - `53331c2` A5 (leakage: per-fold rule discovery in DualModel)
-  - `8ba5d2e` A6 (fingerprints; row order shown to act as a hidden seed)
-  - `ad21d89` C3 (convex constrained confirmatory block, FISTA)
-  - `fd3edee` B2 ablation and EBM results
-  - `247bf2f` paper
-- **Review 4 and decisions 1–5 (0.8.0):**
-  - `d5d5fc7` pack sync with review 4
-  - `d3d4d64` P0: Expert RuleFit (Ebner) credited in README and paper
-  - `4588f20` 0.8.0 code:
-    - canonical rows, constrained block and no filter by default;
-    - `strict=True` raises `ConfirmatoryBoundError`;
-    - D3: `candidates="trees"` option;
-    - D4: stratified complementary half-samples;
-    - 104 tests.
-  - `dca6208` B1 (German) and Table 1 rerun with 0.8.0 defaults; FINDINGS §14–18; APPENDIX
-  - `17cccb0` README brought within CLAIMS_POLICY
-  - `8dd35c5` paper updated to 0.8.0, 7 pages
+## Key numbers (source files)
 
-### Key numbers (source files)
+- Table 1 0.8.1: `experiments/results/table1_v081/table1.json` (+ `reuse_check_*.json`, `run1_ffe5a57/`).
+- Table 1 0.8.0: `experiments/results/table1_v080/table1.json`.
+- B1 German, 0.8.0: `experiments/results/b1/german_summary.json`. Semantic similarity 0.530 / 0.414 / 0.527 and prediction SD 0.056 / 0.087 / 0.079, for fixed-seed RuleFit / filter on / no filter.
+- Hash-check of the 0.8.1 paths: `experiments/results/hashcheck_v081/README.md`.
 
-- **Table 1, 0.8.0** (`experiments/results/table1_v080/table1.json`). ERF runs were identical in 3 of 3 runs on all datasets.
+## Pending, in order
 
-  | Dataset | ERF AUC | RuleFit AUC | ERF terms | ERF fit time |
-  |---|---|---|---|---|
-  | German | 0.794 | 0.788 ± 0.009 | 51 | 24 s |
-  | Taiwan (5,000 rows) | 0.757 | 0.764 ± 0.003 | 28 | 1.6 min |
-  | HMEQ | 0.902 | 0.903 ± 0.003 | 37 | 6.6 min |
-
-  Max AUC gap 0.007. RuleFit gave 100 distinct rule sets per dataset.
-
-- **B1, German** (`experiments/results/b1/german_summary.json`).
-
-  | Arm | Semantic similarity | Prediction SD | Ambiguity | AUC |
-  |---|---|---|---|---|
-  | Fixed-seed RuleFit | 0.530 | 0.056 | 0.21 | 0.785 |
-  | ERF, filter on | 0.414 | 0.087 | 0.40 | 0.775 |
-  | ERF, no filter | 0.527 | 0.079 | 0.38 | 0.784 |
-
-  So the filter is off by default, and **no stability-advantage claim** may be made.
-
-## Decisions
-
-| Topic | State |
-|---|---|
-| Row order | **Decided:** `row_order="canonical"` (default) |
-| Confirmatory mode | **Decided:** `confirmatory_mode="constrained"` (default). Sign bounds only where `expected_sign` is declared; `"refit"` kept. Bound-active → warning + audit flag; `strict=True` raises. |
-| Selection filter | **Decided:** `selection="none"` (default), per B1; `"bootstrap"` keeps it |
-| Resampling (when the filter is on) | **Decided:** `resampling="subsample"` |
-| (a) Library name | **Open** (P0: name clash with Ebner's Expert RuleFit) |
-| (b) `candidates` default | **Open:** `"rulefit"` (current; imodels' own L1 selection, D3) vs `"trees"` |
-| (c) Column order | **Open** (A8): a different column order changed the fit (AUC 0.770 vs 0.794). Canonicalise columns by name, or require a fixed schema? |
-| (d) Calibration in constrained mode | **Open:** it currently raises `ValueError`. Allow it, or keep it refit-only? |
-
-## Pending, in order — phase B prompt (next block of work)
-
-1. **Ebner citation fix.**
-   - Cite only Luisa Ebner's **thesis** and the **R package** (github.com/LuisaEbner/ERF).
-   - Remove every workshop/proceedings citation from the paper bibitem, README "Prior work and attribution", CLAIMS_POLICY (P0 box), FINDINGS §14 and the paper's Table 1 row. **Done 24/11/2026** (FINDINGS §14).
-   - Verify the thesis details (title, degree, university, year) from a source you actually open before writing them; do not guess them.
-2. **Tag `v0.8.0`** on `main` after item 1 is merged (annotated tag, pushed).
-3. **CI fix** (small; needed before a release looks credible). Drop Python 3.9 from the matrix (or pin `runs-on: ubuntu-24.04`), run `ruff format .` and `ruff check --fix .`, and confirm the tests pass on CI. Note that CI runs unpinned scikit-learn; the authoritative numbers come from the pinned image.
-4. **Decisions (a)–(d)** above: ask the author, then implement (c) and (d) with tests (hash-check every new path in 3 runs).
-5. **B1 on HMEQ and Taiwan via GitHub Actions.** Add a `workflow_dispatch` workflow that:
-   - builds the pinned `docker/` image;
-   - runs `python experiments/b1_stability.py --dataset hmeq` (then `taiwan`);
-   - uploads `experiments/results/b1/` as an artifact.
-
-   **No long jobs in a chat session.** Commit the downloaded results, then update FINDINGS (§17), APPENDIX, README and the paper.
-6. **SIRUS baseline** in B1 (same protocol; R `sirus` or a Python port, run in CI too).
-7. **Paper:** add the HMEQ/Taiwan/SIRUS results and the decisions, stay **≤ 7 pages**, and check every number against the result files. Request no new AI review until these are in.
-8. **Later:**
+1. **Author: push the tag `v0.8.0`** (command above).
+2. **B1 under 0.8.1** (`run/b1-v081`, Actions run 45302909823, source `9a2321d`):
+   - Covers German, HMEQ and Taiwan; arms `rulefit_fixed_seed`, `erf_default` and `erf_trees`; 25 subsamples plus the full fit.
+   - German jobs took about 8 min. HMEQ/Taiwan `erf_trees` fits may take hours (job limit 350 min).
+   - When `results/b1-v081` appears:
+     - copy it into PR #18 (`experiments/results/b1_v081/`);
+     - write FINDINGS §21 and settle decision (b): switch only if `erf_trees` is more stable at similar AUC;
+     - update the README B1 bullet and APPENDIX.
+   - If jobs time out, rerun with `chunk=1` on fewer arms, or split `erf_trees` into its own run.
+3. **SIRUS baseline** in B1 (same protocol), run on Actions too.
+4. **Paper** (≤ 7 pages):
+   - Table 1 → 0.8.1 numbers.
+   - Section 4: column order is now canonical, and identity is per machine (replaces "not tested").
+   - B1 on 3 datasets, SIRUS, decisions (b)–(d).
+   - Check every number against the result files.
+   - Then mark PR #18 ready and merge, and tag `v0.8.1`.
+5. **No new AI review** until B1 (3 datasets) and SIRUS are in.
+6. **Later:**
    - B2/B3 on HMEQ/Taiwan;
-   - the ACTION_PLAN review-4 item on overlapping tree rules vs confirmatory rules (prune, or a two-stage offset fit);
-   - C2 (CPSS with error control) if the filter is revisited;
-   - the author's action: credit Ebner in the CV and cover-letter lines (CLAIMS_POLICY).
+   - overlapping tree rules vs confirmatory rules (ACTION_PLAN review 4);
+   - C2 (CPSS);
+   - optional: test `OPENBLAS_CORETYPE` pinning for cross-CPU bitwise identity;
+   - the author's P0 action: credit Ebner in the CV and cover-letter lines (CLAIMS_POLICY).
 
 ## Key files
 
-- Findings log: `docs/refinement/notes/FINDINGS_2026-11-22.md` (§1–18)
+- Findings log: `docs/refinement/notes/FINDINGS_2026-11-22.md` (§1–20)
 - Claims allowed / forbidden: `docs/refinement/notes/CLAIMS_POLICY.md`
-- Plan: `docs/refinement/ACTION_PLAN.md` (phases A–D, plus additions from reviews 2–4)
-- Reviews: `docs/refinement/review/` (paperreview.ai, review 2, review 3, review 4 = Google Deep Review with the P0 box)
+- Plan: `docs/refinement/ACTION_PLAN.md`
+- Reviews: `docs/refinement/review/`
 - Results index and commands: `experiments/results/APPENDIX.md`
-- Paper: `docs/refinement/paper/ExpertRuleFit_paper.tex` (and `.pdf`; the `.md` is a pandoc mirror, regenerate with `pandoc ExpertRuleFit_paper.tex -t gfm -o ExpertRuleFit_paper.md`)
-- Other notes: `docs/refinement/notes/CODE_FACTS.md`, `REFERENCES_TO_VERIFY.md`
+- Paper: `docs/refinement/paper/ExpertRuleFit_paper.tex` (+ `.pdf`; `.md` mirror via `pandoc ExpertRuleFit_paper.tex -t gfm -o ExpertRuleFit_paper.md`; build needs `texlive-latex-extra` and `texlive-science`)
 - Code: `expertrulefit/expert_rulefit.py`, `expertrulefit/constrained.py`
 - Experiments:
-  - `experiments/table1.py`, `b1_stability.py`, `ablation.py`, `sensitivity.py`, `row_order.py`, `fetch_data.py`
-  - Data CSVs are fetched by `fetch_data.py` and are not committed.
+  - `experiments/table1.py`, `b1_stability.py` (`--k-start/--k-stop`), `check_reuse.py`, `ablation.py`, `sensitivity.py`, `row_order.py`, `fetch_data.py`;
+  - workflow `.github/workflows/experiments.yml`.
 - Pinned stack: `docker/Dockerfile`, `docker/requirements.lock.txt`
 
 ## Known pitfalls
 
-- **Python 3.11 f-strings:** the pinned image runs 3.11, where an f-string cannot reuse its own quote type inside `{...}` (allowed from 3.12). Precompute values or alternate quotes.
-- **Foreground limit:** about 10 minutes per shell command in a chat session. **Background jobs are stopped** a few minutes after a reply ends. Run anything long (HMEQ/Taiwan fits: minutes to hours) in GitHub Actions, or leave a resumable command; scripts resume from their result files.
-- **Pinned docker image:**
-  - Build: `docker build -t erf-pinned docker/`.
-  - If Docker Hub rate-limits (429), build with `--build-arg BASE_IMAGE=mirror.gcr.io/library/python:3.11-slim@sha256:07d48240…` (same digest).
+- **Chat-session machine:**
+  - 4 vCPU, 15 GB RAM. Docker is available after `nohup dockerd &`.
+  - **No data access**: UCI, creditriskanalytics.net, OpenML and Hugging Face are blocked by the network policy.
+  - A **container restart killed background jobs** mid-session (files and the docker image survived).
+  - Run long work on Actions only.
+- **Tags cannot be pushed** from the session (HTTP 403); branches can.
+- **Pinned image:**
+  - Build from the repo root: `docker build -f docker/Dockerfile --secret id=ca,src=/root/.ccr/ca-bundle.crt -t erf-pinned .` (the CA secret is only needed behind the session proxy).
   - Run: `docker run --rm --network none -v "$PWD":/work -w /work -e PYTHONPATH=/work erf-pinned <command>`.
-  - In a chat sandbox the docker daemon may need restarting (`nohup dockerd &`).
-  - A stale `*.egg-info` can report a wrong version; the version is read from `_version.py`.
-  - Stack: Python 3.11.18, scikit-learn 1.7.2 (capped < 1.8 because of imodels), NumPy 2.4.6, imodels 3.0.4, single-threaded.
-- **Determinism rules:** seeds derive from `_BASE_SEED`; hash-check every new path in 3 runs; run the full test suite before each commit.
-- **Paper limit: 7 pages** including references. Cut words; do not shrink type or margins.
-- **Claims:** nothing public beyond CLAIMS_POLICY; treat methods suggested by reviews as unverified until their source is opened.
-- **GitHub from a chat session:** GraphQL is blocked, so `gh pr view` fails; use REST (`gh api repos/hdjebar/expertrulefit/...`).
-- **Not read:** the Ebner workshop PDF (a fetch needed approval that never came).
+  - A full test run takes about 16–20 min.
+  - An image built from `main` reports the installed version from its egg-info; the code actually run comes from the mounted checkout.
+- **Determinism:** bitwise per machine only (FINDINGS §20). Hash-check every new path in 3 runs; run the full suite before each commit.
+- **Experiments workflow:** `workflow_dispatch` only works once the file is on `main`; until then, push to `run/<name>` (`table1` in the name selects Table 1). A new push to the same `run/` branch cancels the running run.
+- **imodels** has no `__version__`; use `importlib.metadata`.
+- Python 3.11 f-strings: no reuse of the same quote type inside `{...}`.
+- **Paper limit: 7 pages** including references.
+- **Claims:** nothing public beyond CLAIMS_POLICY.
 
 ## Resume message (paste into a new session)
 
 ```
-Resume the ExpertRuleFit refinement (repo hdjebar/ExpertRuleFit, branch main).
-First read docs/refinement/SESSION_HANDOFF.md, then
-docs/refinement/notes/CLAIMS_POLICY.md and FINDINGS_2026-11-22.md §14–18.
-Do the "Pending, in order" list, starting with item 1 (Ebner citation:
-thesis + R package only, no workshop citation; verify the
-thesis details from a source you open), then item 3 (CI fix) and item 2
-(tag v0.8.0). Work on a new branch per item, open a draft PR, keep all
-standing rules in the handoff (determinism hash-checks, full test suite
-before each commit, pinned docker image, paper ≤ 7 pages, no claims
-beyond CLAIMS_POLICY, no long jobs in the chat: use GitHub Actions for
-B1 on HMEQ/Taiwan). Ask me decisions (a)–(d) before implementing them.
+Resume the ExpertRuleFit refinement (repo hdjebar/ExpertRuleFit).
+First read docs/refinement/SESSION_HANDOFF.md (on branch
+feat/columns-calibration, PR #18), then CLAIMS_POLICY.md and
+FINDINGS_2026-11-22.md §17–20. Check whether results/b1-v081 exists
+(Actions run of experiments.yml on run/b1-v081); if so, do "Pending"
+item 2 (B1 0.8.1 write-up, decision b), then item 3 (SIRUS on Actions)
+and item 4 (paper). Keep the standing rules: hash-check new paths in 3
+runs, full test suite in the pinned image before each commit, paper <= 7
+pages, no claims beyond CLAIMS_POLICY, long jobs on GitHub Actions, no
+new AI review until B1 (3 datasets) and SIRUS are done.
 ```

@@ -42,7 +42,7 @@ Guaranteed reproducible within a deterministic execution envelope: **pinned depe
 
 ## Validation Results
 
-> **Version note (24/11/2026):** the figures below were produced with 0.8.0. Version 0.8.1 sorts the columns by name by default, which changes the fitted models on these datasets; the Table 1 and B1 reruns under 0.8.1 run in GitHub Actions (`.github/workflows/experiments.yml`) and will replace these figures once committed.
+> **Version note (24/11/2026):** the table and bullets below were produced with 0.8.0. Under 0.8.1 (columns sorted by name by default), Table 1 was rerun on GitHub Actions in the pinned image ([`experiments/results/table1_v081/`](experiments/results/table1_v081/)): ExpertRuleFit runs were identical in 3/3 runs on every dataset, with test AUC 0.798 (German), 0.763 (Taiwan) and 0.904 (HMEQ), against RuleFit means of 0.788, 0.764 and 0.903, so within 0.010 of RuleFit. Rule sets and AUC were also identical on two other CPU models, but the probability bytes were not: bitwise identity holds per machine (FINDINGS §20). B1 under 0.8.1 is running.
 
 Seed sensitivity on **3 credit-scoring datasets** (one stratified 80/20 split, preprocessing fitted on the training split; pinned stack in [`docker/`](docker/): Python 3.11, scikit-learn 1.7.2, imodels 3.0.4). RuleFit is fitted with 100 seeds. ExpertRuleFit 0.8.0 (library defaults, no expert rules) ignores the seed by design, so it is run 3 times in separate processes and checked for bitwise-identical output (rule-set hash and SHA-256 of test probabilities).
 
@@ -302,7 +302,7 @@ The prediction is: `P(y=1) = sigmoid(intercept + sum(coef_j * feature_j))`
 
 ## Two Guarantees
 
-1. **Reproducibility** — within the execution envelope (same set of rows, same column order, pinned stack), same rules and same predictions whatever the seed or row order
+1. **Reproducibility** — within the execution envelope (same set of rows, pinned stack, same CPU model; any column order since 0.8.1), same rules and same predictions whatever the seed or row order
 2. **Confirmatory rules kept in the model** (mechanism from Expert RuleFit, Ebner) — in the default constrained mode, a rule whose declared sign the data contradict is held at zero and flagged rather than given the wrong sign
 
 ## Features
