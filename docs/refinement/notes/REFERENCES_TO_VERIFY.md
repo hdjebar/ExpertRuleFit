@@ -52,5 +52,6 @@ Rule: no reference enters the paper until its title, authors, venue and year are
 
 | Reference | Status | Source opened |
 |---|---|---|
-| Ebner, L. (n.d.), *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*, MSc thesis | title and degree verified | ERF README (github.com/LuisaEbner/ERF, branch master). University and year appear only in the reprinted workshop paper (Nalenz 2021, p. 129: VU Amsterdam, 2021); kept as "n.d." by the author's decision |
+| Ebner, L. (2021), *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*, Master's thesis, Faculty of Science, Vrije Universiteit Amsterdam | verified | title and degree: ERF README (branch master); university and year: Nalenz (2021), p. 129, ref. 6 |
+| Ebner, Nalenz, ten Teije, van Harmelen, Augustin (2021), Expert RuleFit, 19th International Conference on Artificial Intelligence in Medicine, KR4HC Workshop | verified as printed | Nalenz (2021), p. XI (and p. 24); reprint pp. 117–130; no LNCS volume stated, so none cited |
 | Nalenz, M. (2021), doctoral dissertation, LMU Munich, edoc.ub.uni-muenchen.de/30379 | verified | PDF supplied by the author (SHA-256 bbdf0c68…319e): title page, p. XII, §3.1.3 |
