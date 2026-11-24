@@ -1,0 +1,3 @@
+source_sha=9a2321d6dd04e943fa3fdc5c10f659fc23eb8db6
+run=https://github.com/hdjebar/ExpertRuleFit/actions/runs/45302909823
+experiment=b1 datasets=german hmeq taiwan arms=rulefit_fixed_seed erf_default erf_trees n_sub=25
