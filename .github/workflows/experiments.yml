@@ -89,13 +89,14 @@ jobs:
           python3 -m pip install --quiet ucimlrepo pandas
           python3 experiments/fetch_data.py --datasets ${{ matrix.dataset }}
 
-      - name: Record the machine
+      - name: Record the machine (best effort)
         run: |
           mkdir -p out
-          { lscpu; nproc; free -g; docker run --rm erf-pinned python -c \
-            "import numpy, sklearn, imodels, expertrulefit; numpy.show_config(); \
-             print(sklearn.__version__, imodels.__version__, expertrulefit.__version__)"; \
-          } > out/machine-${{ matrix.dataset }}-${{ matrix.k_start }}.txt 2>&1
+          f=out/machine-${{ matrix.dataset }}-${{ matrix.k_start }}.txt
+          { lscpu; nproc; free -g; } > "$f" 2>&1 || true
+          docker run --rm erf-pinned python -c "import importlib.metadata as m, numpy; \
+            print({p: m.version(p) for p in ('numpy', 'scikit-learn', 'imodels', 'expertrulefit')}); \
+            numpy.show_config()" >> "$f" 2>&1 || true
 
       - name: Run B1 chunk
         if: env.EXPERIMENT == 'b1'
