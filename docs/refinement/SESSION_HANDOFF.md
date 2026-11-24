@@ -1,6 +1,6 @@
 # Session handoff — ExpertRuleFit refinement
 
-**Written:** Tue 24/11/2026, about 02:00 (Europe/Luxembourg). Replaces the handoff of 24/11 00:15.
+**Written:** Tue 24/11/2026, about 07:00 (Europe/Luxembourg), after the B1 0.8.1 run. Replaces the handoff of 24/11 02:00.
 
 ## Repository state
 
@@ -9,7 +9,7 @@
 | `main` | `a432213`: PR #19 (Ebner/Nalenz citations) on top of PR #16 (`ec79250`) and PR #17 (CI fix, `0d997f8`). Version 0.8.0. CI green (lint, Python 3.10–3.12). |
 | Tag `v0.8.0` | On `ec79250`, pushed by the author (sessions cannot push tags: HTTP 403). |
 | Open PR | #18 `feat/columns-calibration` (draft, up to date with `main`): 0.8.1, decisions (c) and (d), the "same CPU model" condition, the experiments workflow, and the Table 1 0.8.1 results. Stays a draft until B1 and decision (b) are in (author's decision). |
-| Experiment branches | `run/b1-v081` and `run/table1-v081` start `.github/workflows/experiments.yml` on push. Results are committed by the workflow to `results/b1-v081` (pending) and `results/table1-v081` (done, `c88f961`). |
+| Experiment branches | `run/b1-v081` and `run/table1-v081` start `.github/workflows/experiments.yml` on push. Results are committed by the workflow to `results/b1-v081` (done, `58a4091`) and `results/table1-v081` (done, `c88f961`). |
 | Merged branches | `fix/ebner-citation`, `fix/ci`, `docs/nalenz-citation` and `refinement/phase-a` can be deleted; so can `run/source-nalenz` if it exists (it was never pushed). |
 | Tests | 124 passed on the pinned image at PR #18 (104 on `main`). |
 
@@ -55,14 +55,10 @@
    - Ebner et al. (2021), 19th International Conference on Artificial Intelligence in Medicine, KR4HC Workshop (as printed in Nalenz 2021, p. XI; reprint pp. 117–130; no LNCS volume);
    - Nalenz (2021), LMU dissertation (p. XII, §3.1.3), read from the PDF supplied by the author;
    - the ERF R package.
-2. **B1 under 0.8.1** (`run/b1-v081`, Actions run 45302909823, source `9a2321d`):
-   - Covers German, HMEQ and Taiwan; arms `rulefit_fixed_seed`, `erf_default` and `erf_trees`; 25 subsamples plus the full fit.
-   - German jobs took about 8 min. HMEQ/Taiwan `erf_trees` fits may take hours (job limit 350 min).
-   - When `results/b1-v081` appears:
-     - copy it into PR #18 (`experiments/results/b1_v081/`);
-     - write FINDINGS §21 and settle decision (b): switch only if `erf_trees` is more stable at similar AUC;
-     - update the README B1 bullet and APPENDIX.
-   - If jobs time out, rerun with `chunk=1` on fewer arms, or split `erf_trees` into its own run.
+2. **B1 under 0.8.1: ran, but found a defect** (run 45302909823, results `results/b1-v081` → `experiments/results/b1_v081/`, FINDINGS §21).
+   - **German:** 3/26 `erf_default` fits and 25/26 `erf_trees` fits are empty models (AUC 0.500). Cause: unshuffled internal CV folds over canonically sorted rows, now sorted first by `Attribute1`, a strong 4-level categorical. Reproduced by `experiments/diagnostics/repro_empty_fit.py`; fixed there by shuffled folds.
+   - **HMEQ/Taiwan:** no empty fits. Fixed-seed RuleFit is again at least as stable as ERF. `erf_trees` has lower prediction SD and ambiguity than `erf_default` at AUC −0.004 / −0.002, but is 17–34× slower.
+   - **Author's decision needed:** apply the fix (shuffle every internal CV split with `_BASE_SEED` after the canonical sort). Then rerun Table 1 and B1 on Actions, hash-check, and settle decision (b) on all three datasets.
 3. **SIRUS baseline** in B1 (same protocol), run on Actions too.
 4. **Paper** (≤ 7 pages):
    - Table 1 → 0.8.1 numbers.
@@ -80,7 +76,7 @@
 
 ## Key files
 
-- Findings log: `docs/refinement/notes/FINDINGS_2026-11-22.md` (§1–20)
+- Findings log: `docs/refinement/notes/FINDINGS_2026-11-22.md` (§1–21)
 - Claims allowed / forbidden: `docs/refinement/notes/CLAIMS_POLICY.md`
 - Plan: `docs/refinement/ACTION_PLAN.md`
 - Reviews: `docs/refinement/review/`
