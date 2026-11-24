@@ -1,7 +1,7 @@
 # Claims policy — what can be said until new results exist
 
 ## P0 — prior work (23/11/2026, binding)
-- The confirmatory/optional expert-rule mechanism, its terminology and the penalty exemption for confirmatory rules come from **Expert RuleFit** (Ebner, Nalenz, ten Teije, van Harmelen, Augustin; KR4HC workshop, AIME 2021; R package LuisaEbner/ERF). Any public text that describes "keeping the expert's rules" must say the library builds on Expert RuleFit (Ebner et al.) and must not present that mechanism as our own.
+- The confirmatory/optional expert-rule mechanism, its terminology and the penalty exemption for confirmatory rules come from **Expert RuleFit** (Luisa Ebner, MSc thesis *Expert RuleFit – Complementing Rule Ensembles with Expert Knowledge*; R package github.com/LuisaEbner/ERF). Cite only the thesis and the R package. Any public text that describes "keeping the expert's rules" must say the library builds on Expert RuleFit (Ebner) and must not present that mechanism as our own.
 - Our own contributions, as they may be described: determinism by design with canonical row order; the sign-constrained confirmatory block; diagnostics and SHA-256 fingerprints; the conditioning analysis of penalty weighting by column rescaling.
 - The library name is unchanged pending the author's decision.
 
@@ -29,7 +29,7 @@
 
 If Phase B shows good perturbation stability, update the CV line only after the results are committed to the repo.
 
-**Action for the author (P0):** the CV and cover-letter lines above describe keeping the expert's rules without crediting Expert RuleFit. Before the next submission, add a credit (e.g. « en s'appuyant sur Expert RuleFit, Ebner et al. 2021 ») or reword around our own contributions (déterminisme, contraintes de signe, empreintes d'audit).
+**Action for the author (P0):** the CV and cover-letter lines above describe keeping the expert's rules without crediting Expert RuleFit. Before the next submission, add a credit (e.g. « en s'appuyant sur Expert RuleFit (L. Ebner, mémoire de MSc ; package R ERF) ») or reword around our own contributions (déterminisme, contraintes de signe, empreintes d'audit).
 
 ## About the AI review
 paperreview.ai produced an AI-generated review. Do not present it as peer review or "external review". Accurate phrasing: "I had the method critically reviewed; the main gap is stability under perturbation, and here is the protocol / the results."
