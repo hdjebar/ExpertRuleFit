@@ -28,6 +28,7 @@ def _get_interpret_version():
     """Return the installed InterpretML version string, or None."""
     try:
         from importlib.metadata import version as _meta_version
+
         return _meta_version("interpret")
     except Exception:
         return None
@@ -129,8 +130,15 @@ class DualModel(BaseEstimator, ClassifierMixin):
         self.meta_cv = meta_cv
         self.random_state = random_state
 
-    def fit(self, X, y, feature_names=None, confirmatory_rules=None,
-            optional_rules=None, rule_discovery=None):
+    def fit(
+        self,
+        X,
+        y,
+        feature_names=None,
+        confirmatory_rules=None,
+        optional_rules=None,
+        rule_discovery=None,
+    ):
         """Fit the dual architecture with cross-validated stacking.
 
         Parameters
@@ -176,8 +184,12 @@ class DualModel(BaseEstimator, ClassifierMixin):
 
         # Default parameters matching the spec (§3.2)
         ebm_defaults = dict(
-            max_bins=256, interactions=10, learning_rate=0.01,
-            outer_bags=25, min_samples_leaf=2, n_jobs=1,
+            max_bins=256,
+            interactions=10,
+            learning_rate=0.01,
+            outer_bags=25,
+            min_samples_leaf=2,
+            n_jobs=1,
             random_state=self.random_state,
         )
         if self.ebm_params:
@@ -214,7 +226,9 @@ class DualModel(BaseEstimator, ClassifierMixin):
                 fold_optional += list(rule_discovery(X_tr, y_tr, feature_names))
             erf_fold = ExpertRuleFit(**erf_defaults)
             erf_fold.fit(
-                X_tr, y_tr, feature_names=feature_names,
+                X_tr,
+                y_tr,
+                feature_names=feature_names,
                 confirmatory_rules=confirmatory_rules,
                 optional_rules=fold_optional,
             )
@@ -223,7 +237,9 @@ class DualModel(BaseEstimator, ClassifierMixin):
         # Step 2: Fit meta-classifier on OOF predictions
         meta_X = np.column_stack([oof_ebm, oof_erf])
         self.meta_model_ = LogisticRegressionCV(
-            cv=5, random_state=self.random_state, max_iter=1000,
+            cv=5,
+            random_state=self.random_state,
+            max_iter=1000,
         )
         self.meta_model_.fit(meta_X, y)
 
@@ -236,7 +252,9 @@ class DualModel(BaseEstimator, ClassifierMixin):
             final_optional += list(rule_discovery(X, y, feature_names))
         self.erf_ = ExpertRuleFit(**erf_defaults)
         self.erf_.fit(
-            X, y, feature_names=feature_names,
+            X,
+            y,
+            feature_names=feature_names,
             confirmatory_rules=confirmatory_rules,
             optional_rules=final_optional,
         )
@@ -324,7 +342,7 @@ class DualModel(BaseEstimator, ClassifierMixin):
         ebm_local = self.ebm_.explain_local(df)
 
         # ExpertRuleFit rule importance (global — same for all samples)
-        erf_importance = self.erf_.get_rule_importance()
+        erf_importance = self.erf_.get_rule_importance()  # noqa: F841
 
         # Precompute ERF matrix once for all samples (vectorized)
         stable_indices = np.where(self.erf_.stable_mask_)[0]
@@ -356,24 +374,33 @@ class DualModel(BaseEstimator, ClassifierMixin):
                 if j < len(true_coefs) and active_coef_mask[j]:
                     if abs(X_pred_all[i, j]) > 1e-10:
                         name = self.erf_.rule_names_[idx]
-                        category = "confirmatory" if name.startswith("confirmatory:") else \
-                                   "optional" if name.startswith("optional:") else "auto"
-                        erf_active.append({
-                            "rule": name,
-                            "coefficient": float(true_coefs[j]),
-                            "category": category,
-                        })
+                        category = (
+                            "confirmatory"
+                            if name.startswith("confirmatory:")
+                            else "optional"
+                            if name.startswith("optional:")
+                            else "auto"
+                        )
+                        erf_active.append(
+                            {
+                                "rule": name,
+                                "coefficient": float(true_coefs[j]),
+                                "category": category,
+                            }
+                        )
 
-            explanations.append({
-                "sample_index": i,
-                "ebm_score": float(p_ebm[i]),
-                "erf_score": float(p_erf[i]),
-                "final_score": float(p_final[i]),
-                "meta_weights": self.meta_weights_,
-                "ebm_top_contributions": ebm_contribs,
-                "erf_active_rules": erf_active,
-                "confirmatory_all_active": self.confirmatory_all_active_,
-            })
+            explanations.append(
+                {
+                    "sample_index": i,
+                    "ebm_score": float(p_ebm[i]),
+                    "erf_score": float(p_erf[i]),
+                    "final_score": float(p_final[i]),
+                    "meta_weights": self.meta_weights_,
+                    "ebm_top_contributions": ebm_contribs,
+                    "erf_active_rules": erf_active,
+                    "confirmatory_all_active": self.confirmatory_all_active_,
+                }
+            )
 
         return explanations
 
@@ -390,7 +417,7 @@ class DualModel(BaseEstimator, ClassifierMixin):
         total = abs(w["ebm_weight"]) + abs(w["erf_weight"])
         ebm_pct = abs(w["ebm_weight"]) / total * 100 if total > 0 else 50
         erf_pct = abs(w["erf_weight"]) / total * 100 if total > 0 else 50
-        print(f"\nMeta-classifier weights:")
+        print("\nMeta-classifier weights:")
         print(f"  EBM:           {w['ebm_weight']:+.4f} ({ebm_pct:.0f}%)")
         print(f"  ExpertRuleFit: {w['erf_weight']:+.4f} ({erf_pct:.0f}%)")
         print(f"  Intercept:     {w['intercept']:+.4f}")
@@ -399,18 +426,19 @@ class DualModel(BaseEstimator, ClassifierMixin):
         importances = self.ebm_.term_importances()
         n_main = sum(1 for tf in self.ebm_.term_features_ if len(tf) == 1)
         n_inter = sum(1 for tf in self.ebm_.term_features_ if len(tf) == 2)
-        print(f"\nEBM component:")
+        print("\nEBM component:")
         print(f"  Main effects: {n_main}, Interactions: {n_inter}")
         # Top features
-        pairs = [(self.ebm_.term_names_[i], importances[i])
-                 for i in range(len(importances))]
+        pairs = [
+            (self.ebm_.term_names_[i], importances[i]) for i in range(len(importances))
+        ]
         pairs.sort(key=lambda x: x[1], reverse=True)
-        print(f"  Top features:")
+        print("  Top features:")
         for name, imp in pairs[:5]:
             print(f"    {imp:.4f} | {name}")
 
         # ExpertRuleFit summary
-        print(f"\nExpertRuleFit component:")
+        print("\nExpertRuleFit component:")
         self.erf_.summary()
 
         print("=" * 65)

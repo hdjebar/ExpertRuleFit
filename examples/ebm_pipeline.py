@@ -10,6 +10,7 @@ Usage: python examples/ebm_pipeline.py
 """
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -23,23 +24,34 @@ def generate_credit_data(n_samples=1000, random_state=42):
     """Generate synthetic credit scoring data with interactions."""
     rng = np.random.RandomState(random_state)
     n = n_samples
-    X = np.column_stack([
-        rng.uniform(0, 5, n),       # country_risk
-        rng.exponential(30, n),      # payment_delay
-        rng.lognormal(8, 1.5, n),   # tx_volume
-        rng.beta(2, 5, n),          # cash_ratio
-        rng.beta(1.5, 8, n),        # night_tx_ratio
-        rng.uniform(0, 20, n),      # tenure
-    ])
-    feature_names = ["country_risk", "payment_delay", "tx_volume",
-                     "cash_ratio", "night_tx_ratio", "tenure"]
+    X = np.column_stack(
+        [
+            rng.uniform(0, 5, n),  # country_risk
+            rng.exponential(30, n),  # payment_delay
+            rng.lognormal(8, 1.5, n),  # tx_volume
+            rng.beta(2, 5, n),  # cash_ratio
+            rng.beta(1.5, 8, n),  # night_tx_ratio
+            rng.uniform(0, 20, n),  # tenure
+        ]
+    )
+    feature_names = [
+        "country_risk",
+        "payment_delay",
+        "tx_volume",
+        "cash_ratio",
+        "night_tx_ratio",
+        "tenure",
+    ]
 
     # Ground truth includes an INTERACTION: cash_ratio * night_tx_ratio
-    logit = (0.8 * (X[:, 3] > 0.4)
-             + 0.5 * (X[:, 4] > 0.15)
-             + 0.3 * (X[:, 3] > 0.3) * (X[:, 4] > 0.1)  # interaction!
-             + 0.1 * (X[:, 0] > 2.5)
-             + rng.normal(0, 0.3, n) - 0.8)
+    logit = (
+        0.8 * (X[:, 3] > 0.4)
+        + 0.5 * (X[:, 4] > 0.15)
+        + 0.3 * (X[:, 3] > 0.3) * (X[:, 4] > 0.1)  # interaction!
+        + 0.1 * (X[:, 0] > 2.5)
+        + rng.normal(0, 0.3, n)
+        - 0.8
+    )
     y = (logit > 0).astype(int)
     return X, y, feature_names
 
@@ -57,7 +69,9 @@ def main():
     # ── Step 1: Discover interactions with EBM ──────────────────────
     print("\n[Step 1] Fitting EBM to discover interactions...")
     rules, ebm = discover_interaction_rules(
-        X_train, y_train, fn,
+        X_train,
+        y_train,
+        fn,
         top_k=3,
         # Demo only: we promote the EBM rules to confirmatory to show the
         # preservation mechanism. In practice, data-discovered rules stay
@@ -67,6 +81,7 @@ def main():
     )
 
     from expertrulefit.ebm_bridge import summarize_ebm_interactions
+
     summarize_ebm_interactions(ebm)
 
     print(f"\nExtracted {len(rules)} interaction rules:")
@@ -112,7 +127,7 @@ def main():
     delta = auc_ebm - auc_auto
     print(f"  AUC delta:    {delta:+.4f}")
     print(f"  Reproducible: {unique}/5 unique rule sets")
-    print(f"  Confirmatory: ALL PRESERVED")
+    print("  Confirmatory: ALL PRESERVED")
     print()
 
     # Full model summary

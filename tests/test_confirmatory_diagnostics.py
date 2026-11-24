@@ -11,8 +11,13 @@ from expertrulefit.rule_spec import load_rule_specs, save_rule_specs
 # Small, fast configuration: these tests exercise the diagnostics, not the
 # rule generator.
 # These tests exercise the refit-mode sign check and diagnostics.
-FAST = dict(n_estimators=30, max_rules=10, n_bootstrap=2, confirmatory_mode="refit",
-            selection="bootstrap")
+FAST = dict(
+    n_estimators=30,
+    max_rules=10,
+    n_bootstrap=2,
+    confirmatory_mode="refit",
+    selection="bootstrap",
+)
 
 
 @pytest.fixture(scope="module")
@@ -118,7 +123,9 @@ def absorbing_model(signal_data):
     """
     X, y, fn = signal_data
     m = ExpertRuleFit(**FAST).fit(
-        X, y, feature_names=fn,
+        X,
+        y,
+        feature_names=fn,
         confirmatory_rules=[_rule_b_pos(+1), _noise_rule()],
     )
     return m, X, y
@@ -175,7 +182,9 @@ def test_diagnostics_are_deterministic(signal_data, absorbing_model):
     X, y, fn = signal_data
     m1, _, _ = absorbing_model
     m2 = ExpertRuleFit(**FAST).fit(
-        X, y, feature_names=fn,
+        X,
+        y,
+        feature_names=fn,
         confirmatory_rules=[_rule_b_pos(+1), _noise_rule()],
     )
     assert m1.diagnose_confirmatory() == m2.diagnose_confirmatory()
@@ -185,9 +194,7 @@ def test_save_load_keeps_diagnostics(absorbing_model, tmp_path):
     m, X, _ = absorbing_model
     path = tmp_path / "m.joblib"
     m.save(path)
-    m2 = ExpertRuleFit.load(
-        path, confirmatory_rules=[_rule_b_pos(+1), _noise_rule()]
-    )
+    m2 = ExpertRuleFit.load(path, confirmatory_rules=[_rule_b_pos(+1), _noise_rule()])
     assert m2.confirmatory_sign_ok_ == m.confirmatory_sign_ok_
     assert m2.diagnose_confirmatory() == m.diagnose_confirmatory()
     np.testing.assert_array_equal(m2.predict_proba(X), m.predict_proba(X))
@@ -214,9 +221,10 @@ def test_rulespec_expected_sign_roundtrip(tmp_path):
         name="x", clauses=[{"feature": "cash", "op": "<", "threshold": 1}]
     )
     assert "expected_sign" not in no_sign.to_rule_dict(["cash"])
-    assert RuleSpec.from_dict(
-        {"name": "x", "clauses": no_sign.clauses}
-    ).expected_sign is None
+    assert (
+        RuleSpec.from_dict({"name": "x", "clauses": no_sign.clauses}).expected_sign
+        is None
+    )
 
 
 @pytest.mark.parametrize("bad", [0, 2, "+", True, 0.5])

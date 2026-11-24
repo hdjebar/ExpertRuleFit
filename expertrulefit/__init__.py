@@ -14,7 +14,7 @@ try:
 
     __version__ = _meta_version("expertrulefit")
 except Exception:
-    from ._version import __version__
+    from ._version import __version__  # noqa: F401
 
 __all__ = [
     "ExpertRuleFit",

@@ -86,7 +86,9 @@ def test_stacking_fold_models_never_see_their_validation_rows(fakes, data, kind)
         assert not (model.fit_ids & val), "fold model predicted rows it was fitted on"
         assert model.fit_ids | val == set(range(len(y)))
         predicted |= val
-    assert predicted == set(range(len(y))), "out-of-fold predictions cover every row once"
+    assert predicted == set(range(len(y))), (
+        "out-of-fold predictions cover every row once"
+    )
     assert final.fit_ids == set(range(len(y)))
 
 
@@ -96,14 +98,20 @@ def test_rule_discovery_runs_on_training_folds_only(fakes, data):
 
     def discover(X_tr, y_tr, names):
         calls.append(_ids(X_tr))
-        return [{"name": f"r{len(calls)}",
-                 "evaluate": lambda X, f: (np.asarray(X)[:, 1] > 0).astype(float)}]
+        return [
+            {
+                "name": f"r{len(calls)}",
+                "evaluate": lambda X, f: (np.asarray(X)[:, 1] > 0).astype(float),
+            }
+        ]
 
     DualModel(meta_cv=5).fit(X, y, feature_names=fn, rule_discovery=discover)
     folds, final = _fold_models(fakes, "erf", 5)
     assert len(calls) == 6
     for ids, model in zip(calls[:5], folds):
-        assert ids == model.fit_ids, "rules for a fold are discovered on that fold's training rows"
+        assert ids == model.fit_ids, (
+            "rules for a fold are discovered on that fold's training rows"
+        )
         val = [e[2] for e in fakes if e[1] == "predict" and e[3] is model][0]
         assert not (ids & val)
     assert calls[5] == set(range(len(y)))
@@ -127,7 +135,9 @@ def test_discover_interaction_rules_fits_ebm_on_given_rows_only(monkeypatch, dat
         return self
 
     RecordingEBM.fit = fit
-    monkeypatch.setattr(interpret.glassbox, "ExplainableBoostingClassifier", RecordingEBM)
+    monkeypatch.setattr(
+        interpret.glassbox, "ExplainableBoostingClassifier", RecordingEBM
+    )
     X, y, fn = data
     train = np.arange(0, 70)
     rules, _ = discover_interaction_rules(X[train], y[train], fn, top_k=1)
