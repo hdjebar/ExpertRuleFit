@@ -31,7 +31,7 @@ References:
 import logging
 import warnings
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -151,8 +151,7 @@ class EBMRuleExtractor:
 
         report = EBMExtractionReport()
         report.feature_importances = {
-            ebm.term_names_[i]: float(importances[i])
-            for i in range(len(importances))
+            ebm.term_names_[i]: float(importances[i]) for i in range(len(importances))
         }
 
         for term_idx in range(len(ebm.term_features_)):
@@ -180,7 +179,7 @@ class EBMRuleExtractor:
 
         # Sort interactions by importance and limit
         report.interaction_rules.sort(key=lambda r: r.ebm_importance, reverse=True)
-        report.interaction_rules = report.interaction_rules[:self.interaction_top_k]
+        report.interaction_rules = report.interaction_rules[: self.interaction_top_k]
 
         report.n_shape_rules = len(report.shape_rules)
         report.n_interaction_rules = len(report.interaction_rules)
@@ -193,9 +192,7 @@ class EBMRuleExtractor:
 
         return report
 
-    def _extract_shape_rules(
-        self, ebm, term_idx, feat_idx, feature_names, importance
-    ):
+    def _extract_shape_rules(self, ebm, term_idx, feat_idx, feature_names, importance):
         """Extract threshold rules from a single EBM shape function.
 
         Looks for:
@@ -250,25 +247,29 @@ class EBMRuleExtractor:
                     _fidx = feat_idx
 
                     if direction == ">":
+
                         def _eval(X, fn, t=_thresh, fi=_fidx):
                             return (X[:, fi] > t).astype(np.float64)
                     else:
+
                         def _eval(X, fn, t=_thresh, fi=_fidx):
                             return (X[:, fi] <= t).astype(np.float64)
 
                     rule_names_seen.add(rule_name)
-                    rules.append(ExtractedRule(
-                        name=rule_name,
-                        description=(
-                            f"EBM shape function for {feat_name} crosses zero "
-                            f"at {threshold:.4f} (effect={effect_size:.3f})"
-                        ),
-                        source="ebm_shape",
-                        feature_indices=(feat_idx,),
-                        feature_names=(feat_name,),
-                        ebm_importance=importance,
-                        evaluate=_eval,
-                    ))
+                    rules.append(
+                        ExtractedRule(
+                            name=rule_name,
+                            description=(
+                                f"EBM shape function for {feat_name} crosses zero "
+                                f"at {threshold:.4f} (effect={effect_size:.3f})"
+                            ),
+                            source="ebm_shape",
+                            feature_indices=(feat_idx,),
+                            feature_names=(feat_name,),
+                            ebm_importance=importance,
+                            evaluate=_eval,
+                        )
+                    )
 
         # --- Strategy 2: Largest score jumps ---
         if len(score_values) > 2:
@@ -291,24 +292,28 @@ class EBMRuleExtractor:
                     _effect = float(diffs[i])
 
                     if direction == ">":
+
                         def _eval(X, fn, t=_thresh, fi=_fidx):
                             return (X[:, fi] > t).astype(np.float64)
                     else:
+
                         def _eval(X, fn, t=_thresh, fi=_fidx):
                             return (X[:, fi] <= t).astype(np.float64)
 
-                    rules.append(ExtractedRule(
-                        name=candidate_name,
-                        description=(
-                            f"EBM large score jump for {feat_name} "
-                            f"at {threshold:.4f} (delta_score={_effect:.3f})"
-                        ),
-                        source="ebm_shape",
-                        feature_indices=(feat_idx,),
-                        feature_names=(feat_name,),
-                        ebm_importance=importance,
-                        evaluate=_eval,
-                    ))
+                    rules.append(
+                        ExtractedRule(
+                            name=candidate_name,
+                            description=(
+                                f"EBM large score jump for {feat_name} "
+                                f"at {threshold:.4f} (delta_score={_effect:.3f})"
+                            ),
+                            source="ebm_shape",
+                            feature_indices=(feat_idx,),
+                            feature_names=(feat_name,),
+                            ebm_importance=importance,
+                            evaluate=_eval,
+                        )
+                    )
 
         return rules
 
@@ -365,8 +370,7 @@ class EBMRuleExtractor:
             dir2 = ">" if peak_score > 0 else "<="
 
             rule_name = (
-                f"EBM:{fname1} {dir1} {thresh1:.4f} AND "
-                f"{fname2} {dir2} {thresh2:.4f}"
+                f"EBM:{fname1} {dir1} {thresh1:.4f} AND {fname2} {dir2} {thresh2:.4f}"
             )
 
             _t1, _t2 = thresh1, thresh2
@@ -380,23 +384,24 @@ class EBMRuleExtractor:
                 c2 = X[:, fi2] > t2 if d2 == ">" else X[:, fi2] <= t2
                 return (c1 & c2).astype(np.float64)
 
-            rules.append(ExtractedRule(
-                name=rule_name,
-                description=(
-                    f"EBM interaction: {fname1} x {fname2} peak region "
-                    f"(score={peak_score:.3f})"
-                ),
-                source="ebm_interaction",
-                feature_indices=(feat_idx_1, feat_idx_2),
-                feature_names=(fname1, fname2),
-                ebm_importance=importance,
-                evaluate=_eval_interaction,
-            ))
+            rules.append(
+                ExtractedRule(
+                    name=rule_name,
+                    description=(
+                        f"EBM interaction: {fname1} x {fname2} peak region "
+                        f"(score={peak_score:.3f})"
+                    ),
+                    source="ebm_interaction",
+                    feature_indices=(feat_idx_1, feat_idx_2),
+                    feature_names=(fname1, fname2),
+                    ebm_importance=importance,
+                    evaluate=_eval_interaction,
+                )
+            )
 
         except Exception as exc:
             warnings.warn(
-                f"Failed to extract interaction rule for "
-                f"{fname1} x {fname2}: {exc}"
+                f"Failed to extract interaction rule for {fname1} x {fname2}: {exc}"
             )
 
         return rules
@@ -691,8 +696,7 @@ class DualGlassBox(BaseEstimator, ClassifierMixin):
 
         selected = self.erf_.get_selected_rules()
         importance_map = {
-            r["name"]: r["coefficient"]
-            for r in self.erf_.get_rule_importance()
+            r["name"]: r["coefficient"] for r in self.erf_.get_rule_importance()
         }
 
         report = []
@@ -709,15 +713,17 @@ class DualGlassBox(BaseEstimator, ClassifierMixin):
             survived = full_name in selected
             coef = importance_map.get(full_name, 0.0)
 
-            report.append({
-                "name": rule.name,
-                "full_name": full_name,
-                "source": rule.source,
-                "description": rule.description,
-                "ebm_importance": rule.ebm_importance,
-                "survived_bootstrap": survived,
-                "erf_coefficient": coef,
-            })
+            report.append(
+                {
+                    "name": rule.name,
+                    "full_name": full_name,
+                    "source": rule.source,
+                    "description": rule.description,
+                    "ebm_importance": rule.ebm_importance,
+                    "survived_bootstrap": survived,
+                    "erf_coefficient": coef,
+                }
+            )
 
         report.sort(key=lambda r: abs(r["erf_coefficient"]), reverse=True)
         return report
@@ -771,47 +777,54 @@ class DualGlassBox(BaseEstimator, ClassifierMixin):
         if self.train_auc_ebm_ is not None:
             lines.append(f"  Train AUC: {self.train_auc_ebm_:.4f}")
 
-        lines.extend([
-            "",
-            "Rule Extraction from EBM",
-            f"  Shape function rules: {self.extraction_report_.n_shape_rules}",
-            f"  Interaction rules: {self.extraction_report_.n_interaction_rules}",
-            f"  Injected as: {self.inject_ebm_rules_as}",
-        ])
+        lines.extend(
+            [
+                "",
+                "Rule Extraction from EBM",
+                f"  Shape function rules: {self.extraction_report_.n_shape_rules}",
+                f"  Interaction rules: {self.extraction_report_.n_interaction_rules}",
+                f"  Injected as: {self.inject_ebm_rules_as}",
+            ]
+        )
 
         if self.extraction_report_.top_interactions:
             lines.append("  Top interactions:")
             for f1, f2, imp in self.extraction_report_.top_interactions[:5]:
                 lines.append(f"    {f1} x {f2} (importance={imp:.4f})")
 
-        lines.extend([
-            "",
-            "ExpertRuleFit (Bootstrap-Stabilized Logistic)",
-            f"  Stable features: {self.erf_.n_stable_rules_}",
-            f"  Active rules: {len(self.erf_.get_selected_rules())}",
-        ])
+        lines.extend(
+            [
+                "",
+                "ExpertRuleFit (Bootstrap-Stabilized Logistic)",
+                f"  Stable features: {self.erf_.n_stable_rules_}",
+                f"  Active rules: {len(self.erf_.get_selected_rules())}",
+            ]
+        )
 
         if self.train_auc_erf_ is not None:
             lines.append(f"  Train AUC: {self.train_auc_erf_:.4f}")
 
         if hasattr(self.erf_, "confirmatory_all_active_"):
-            status = "ALL PRESERVED" if self.erf_.confirmatory_all_active_ else "SOME ELIMINATED"
+            status = (
+                "ALL PRESERVED"
+                if self.erf_.confirmatory_all_active_
+                else "SOME ELIMINATED"
+            )
             lines.append(f"  Confirmatory rules: {status}")
 
         # EBM rules that survived
         ebm_rule_report = self.get_ebm_rules_in_model()
         n_survived = sum(1 for r in ebm_rule_report if r["survived_bootstrap"])
         n_total = len(ebm_rule_report)
-        lines.extend([
-            "",
-            f"EBM Rules in Final Model: {n_survived}/{n_total} survived",
-        ])
+        lines.extend(
+            [
+                "",
+                f"EBM Rules in Final Model: {n_survived}/{n_total} survived",
+            ]
+        )
         for r in ebm_rule_report[:5]:
             marker = "+" if r["survived_bootstrap"] else "-"
-            lines.append(
-                f"  [{marker}] {r['name']} "
-                f"(coef={r['erf_coefficient']:+.4f})"
-            )
+            lines.append(f"  [{marker}] {r['name']} (coef={r['erf_coefficient']:+.4f})")
 
         # Test set comparison
         if X_test is not None and y_test is not None:
@@ -823,20 +836,24 @@ class DualGlassBox(BaseEstimator, ClassifierMixin):
                 df_test = pd.DataFrame(X_test, columns=self.feature_names_)
                 ebm_auc = roc_auc_score(y_test, self.ebm_.predict_proba(df_test)[:, 1])
                 erf_auc = roc_auc_score(y_test, self.erf_.predict_proba(X_test)[:, 1])
-                lines.extend([
-                    "",
-                    "Test Set Comparison",
-                    f"  EBM AUC:            {ebm_auc:.4f}",
-                    f"  ExpertRuleFit AUC:  {erf_auc:.4f}",
-                    f"  Delta:              {ebm_auc - erf_auc:+.4f}",
-                ])
+                lines.extend(
+                    [
+                        "",
+                        "Test Set Comparison",
+                        f"  EBM AUC:            {ebm_auc:.4f}",
+                        f"  ExpertRuleFit AUC:  {erf_auc:.4f}",
+                        f"  Delta:              {ebm_auc - erf_auc:+.4f}",
+                    ]
+                )
             except Exception as exc:
                 lines.append(f"\n  Test comparison failed: {exc}")
 
-        lines.extend([
-            "",
-            "=" * 70,
-        ])
+        lines.extend(
+            [
+                "",
+                "=" * 70,
+            ]
+        )
 
         text = "\n".join(lines)
 

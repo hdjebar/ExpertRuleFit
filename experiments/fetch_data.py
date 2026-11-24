@@ -61,8 +61,10 @@ def main():
         df = FETCHERS[name]()
         path = out / f"{name}.csv"
         df.to_csv(path, index=False)
-        print(f"{name}: {df.shape[0]} rows, {df.shape[1] - 1} features, "
-              f"positive rate {np.mean(df['target']):.3f} -> {path}")
+        print(
+            f"{name}: {df.shape[0]} rows, {df.shape[1] - 1} features, "
+            f"positive rate {np.mean(df['target']):.3f} -> {path}"
+        )
 
 
 if __name__ == "__main__":

@@ -72,8 +72,16 @@ logger = logging.getLogger(__name__)
 _SKLEARN_PENALTY_DEPRECATED = Version(_sklearn.__version__) >= Version("1.8")
 
 
-def _make_logistic_cv(*, l1_ratios, solver="saga", cv=5, random_state=42,
-                       tol=1e-4, max_iter=10000, n_jobs=None):
+def _make_logistic_cv(
+    *,
+    l1_ratios,
+    solver="saga",
+    cv=5,
+    random_state=42,
+    tol=1e-4,
+    max_iter=10000,
+    n_jobs=None,
+):
     """Create a LogisticRegressionCV compatible with sklearn >= 1.8."""
     if _SKLEARN_PENALTY_DEPRECATED:
         return LogisticRegressionCV(
@@ -97,15 +105,25 @@ def _make_logistic_cv(*, l1_ratios, solver="saga", cv=5, random_state=42,
     )
 
 
-def _make_logistic(*, penalty=None, solver="lbfgs", max_iter=10000,
-                    random_state=42, tol=1e-4, l1_ratio=None, C=1.0):
+def _make_logistic(
+    *,
+    penalty=None,
+    solver="lbfgs",
+    max_iter=10000,
+    random_state=42,
+    tol=1e-4,
+    l1_ratio=None,
+    C=1.0,
+):
     """Create a LogisticRegression compatible with sklearn >= 1.8."""
     if _SKLEARN_PENALTY_DEPRECATED:
-        kw = dict(solver=solver, max_iter=max_iter,
-                  random_state=random_state, tol=tol, C=C)
+        kw = dict(
+            solver=solver, max_iter=max_iter, random_state=random_state, tol=tol, C=C
+        )
         if penalty is None:
             # Unpenalized: use C=inf (sklearn 1.8 idiom)
             import math
+
             kw["C"] = math.inf
             kw["l1_ratio"] = 0
         elif penalty == "l2":
@@ -115,8 +133,13 @@ def _make_logistic(*, penalty=None, solver="lbfgs", max_iter=10000,
         elif penalty == "elasticnet":
             kw["l1_ratio"] = l1_ratio if l1_ratio is not None else 0.5
         return LogisticRegression(**kw)
-    kw = dict(penalty=penalty, solver=solver, max_iter=max_iter,
-              random_state=random_state, tol=tol)
+    kw = dict(
+        penalty=penalty,
+        solver=solver,
+        max_iter=max_iter,
+        random_state=random_state,
+        tol=tol,
+    )
     if penalty is not None:
         kw["C"] = C
     if penalty == "elasticnet":
@@ -139,8 +162,8 @@ def _column_stats(X_all, n_linear, standardize):
     if sparse.issparse(X_all):
         sq = np.asarray(X_all.multiply(X_all).mean(axis=0)).ravel()
     else:
-        sq = np.asarray((X_all ** 2).mean(axis=0)).ravel()
-    sd = np.sqrt(np.maximum(sq - mean ** 2, 0.0))
+        sq = np.asarray((X_all**2).mean(axis=0)).ravel()
+    sd = np.sqrt(np.maximum(sq - mean**2, 0.0))
     sd = np.where(sd > 1e-12, sd, 1.0)
     center = np.zeros(p)
     center[:n_linear] = mean[:n_linear]
@@ -177,8 +200,12 @@ def _resample_indices(y, n_draws, base_seed, scheme):
     """
     y = np.asarray(y)
     if scheme == "bootstrap":
-        return [np.random.RandomState(base_seed + b).choice(len(y), size=len(y), replace=True)
-                for b in range(n_draws)]
+        return [
+            np.random.RandomState(base_seed + b).choice(
+                len(y), size=len(y), replace=True
+            )
+            for b in range(n_draws)
+        ]
     draws = []
     k = 0
     classes = np.unique(y)
@@ -197,7 +224,9 @@ def _resample_indices(y, n_draws, base_seed, scheme):
     return draws[:n_draws]
 
 
-def _bootstrap_iteration(idx, X_all, y, center, scale, base_seed, l1_ratios, tol, n_jobs):
+def _bootstrap_iteration(
+    idx, X_all, y, center, scale, base_seed, l1_ratios, tol, n_jobs
+):
     """Fit one resample of the selection-frequency filter (joblib-friendly)."""
     X_boot = _solver_matrix(X_all[idx], center, scale)
     y_boot = y[idx]
@@ -243,8 +272,14 @@ class TreeRuleCandidates:
     a fitted RuleFitClassifier, so the rest of the pipeline is unchanged.
     """
 
-    def __init__(self, n_estimators, tree_size, random_state, min_support=0.01,
-                 max_candidates=None):
+    def __init__(
+        self,
+        n_estimators,
+        tree_size,
+        random_state,
+        min_support=0.01,
+        max_candidates=None,
+    ):
         self.n_estimators = n_estimators
         self.tree_size = tree_size
         self.random_state = random_state
@@ -256,9 +291,14 @@ class TreeRuleCandidates:
 
         X = np.asarray(X, dtype=np.float64)
         placeholders = [f"X_{i}" for i in range(X.shape[1])]
-        raw = extract_rulefit(X, y, feature_names=placeholders,
-                              n_estimators=self.n_estimators, tree_size=self.tree_size,
-                              random_state=self.random_state)
+        raw = extract_rulefit(
+            X,
+            y,
+            feature_names=placeholders,
+            n_estimators=self.n_estimators,
+            tree_size=self.tree_size,
+            random_state=self.random_state,
+        )
         seen = {}
         for r in sorted(set(str(r) for r in raw)):
             col = eval_rule_on_data(r, X)
@@ -280,16 +320,16 @@ class TreeRuleCandidates:
 
     @staticmethod
     def _named(rule, feature_names):
-        return re.sub(r"\bX_(\d+)\b", lambda m: str(feature_names[int(m.group(1))]), rule)
+        return re.sub(
+            r"\bX_(\d+)\b", lambda m: str(feature_names[int(m.group(1))]), rule
+        )
 
 
 # ---------------------------------------------------------------------------
 # Rule evaluation
 # ---------------------------------------------------------------------------
 
-_RULE_PATTERN = re.compile(
-    r"X_(\d+)\s*(<=|>=|<|>)\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)"
-)
+_RULE_PATTERN = re.compile(r"X_(\d+)\s*(<=|>=|<|>)\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)")
 
 # Vectorized comparison operators keyed by string token
 _OPERATORS = {
@@ -340,8 +380,7 @@ def eval_rule_on_data(rule_str, X, *, parse_mode="drop_rule"):
         match = _RULE_PATTERN.search(cond)
         if match is None:
             msg = (
-                f"Failed to parse rule condition: '{cond.strip()}' "
-                f"in rule '{rule_str}'"
+                f"Failed to parse rule condition: '{cond.strip()}' in rule '{rule_str}'"
             )
             if parse_mode == "raise":
                 raise ValueError(msg)
@@ -374,8 +413,7 @@ def eval_rule_on_data(rule_str, X, *, parse_mode="drop_rule"):
 # ---------------------------------------------------------------------------
 
 
-def build_rule_feature_matrix(rulefit_model, X, *, min_support=0.0,
-                              max_support=1.0):
+def build_rule_feature_matrix(rulefit_model, X, *, min_support=0.0, max_support=1.0):
     """Build the full rule feature matrix from a fitted RuleFitClassifier.
 
     Returns a sparse CSR matrix: [linear features | rule activations].
@@ -767,7 +805,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     # Fitting
     # ------------------------------------------------------------------
 
-    def fit(self, X, y, feature_names=None, confirmatory_rules=None, optional_rules=None):
+    def fit(
+        self, X, y, feature_names=None, confirmatory_rules=None, optional_rules=None
+    ):
         """Fit ExpertRuleFit with bootstrap-stabilized logistic elastic net.
 
         Parameters
@@ -861,13 +901,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         # deterministic=True forces bootstrap_n_jobs=1 (sequential).
         inner_n_jobs = 1 if self.deterministic else self.n_jobs
         bootstrap_n_jobs = (
-            1 if self.deterministic
-            else (1 if self.n_jobs and self.n_jobs != 1 else -1)
+            1 if self.deterministic else (1 if self.n_jobs and self.n_jobs != 1 else -1)
         )
         thread_limit = self.thread_limit if self.deterministic else None
 
         with threadpool_limits(limits=thread_limit):
             import time as _time
+
             _t = _time.perf_counter()
             self.timings_ = {}
 
@@ -923,9 +963,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             n_expert = len(expert_columns)
 
             if expert_columns:
-                X_all = sparse.hstack(
-                    [X_rules_sparse] + expert_columns, format="csr"
-                )
+                X_all = sparse.hstack([X_rules_sparse] + expert_columns, format="csr")
             else:
                 X_all = X_rules_sparse
 
@@ -936,8 +974,10 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             # === Build penalty weight vector ===
             penalty_weights = np.ones(n_total_features)
-            penalty_map = {"confirmatory": self.confirmatory_penalty,
-                           "optional": self.optional_penalty}
+            penalty_map = {
+                "confirmatory": self.confirmatory_penalty,
+                "optional": self.optional_penalty,
+            }
             for i, cat in enumerate(expert_categories):
                 penalty_weights[n_auto_features + i] = penalty_map[cat]
 
@@ -946,9 +986,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             # Standardise columns (statistics from the training data), then
             # apply the penalty weights: solver sees (Z - center) * scale.
-            col_center, col_sd = _column_stats(
-                X_all, X.shape[1], self.standardize
-            )
+            col_center, col_sd = _column_stats(X_all, X.shape[1], self.standardize)
             col_scale = inv_sqrt_w / col_sd
             self.col_center_ = col_center
             self.col_sd_ = col_sd
@@ -958,18 +996,28 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             logger.info(
                 "Step 4: Bootstrap stabilization (%d iterations, "
                 "bootstrap_n_jobs=%d, inner_n_jobs=%s)",
-                self.n_bootstrap, bootstrap_n_jobs, inner_n_jobs,
+                self.n_bootstrap,
+                bootstrap_n_jobs,
+                inner_n_jobs,
             )
 
             if self.selection == "none":
                 results = [np.ones(n_total_features, dtype=int)]
             else:
-                draws = _resample_indices(y, self.n_bootstrap, self._BASE_SEED,
-                                          self.resampling)
+                draws = _resample_indices(
+                    y, self.n_bootstrap, self._BASE_SEED, self.resampling
+                )
                 results = Parallel(n_jobs=bootstrap_n_jobs)(
                     delayed(_bootstrap_iteration)(
-                        idx, X_all, y, col_center, col_scale,
-                        self._BASE_SEED, self.l1_ratios, self.tol, inner_n_jobs,
+                        idx,
+                        X_all,
+                        y,
+                        col_center,
+                        col_scale,
+                        self._BASE_SEED,
+                        self.l1_ratios,
+                        self.tol,
+                        inner_n_jobs,
                     )
                     for idx in draws
                 )
@@ -980,8 +1028,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             if n_successful_boots == 0:
                 raise RuntimeError(
-                    "All bootstrap iterations failed. "
-                    "Cannot determine stable rules."
+                    "All bootstrap iterations failed. Cannot determine stable rules."
                 )
 
             rule_selection_count = np.sum(successful, axis=0)
@@ -995,12 +1042,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             _lap("bootstrap")
             # === Step 5: Frequency-based filtering ===
-            self.bootstrap_frequencies_ = (
-                rule_selection_count / n_successful_boots
-            )
-            self.stable_mask_ = (
-                self.bootstrap_frequencies_ >= self.rule_threshold
-            )
+            self.bootstrap_frequencies_ = rule_selection_count / n_successful_boots
+            self.stable_mask_ = self.bootstrap_frequencies_ >= self.rule_threshold
 
             # Force-include ONLY confirmatory rules (optional must earn it)
             for i, cat in enumerate(expert_categories):
@@ -1025,7 +1068,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             self.stable_center_ = col_center[self.stable_mask_]
             self.stable_scale_ = col_scale[self.stable_mask_]
             X_stable_weighted = _solver_matrix(
-                X_all[:, self.stable_mask_], self.stable_center_,
+                X_all[:, self.stable_mask_],
+                self.stable_center_,
                 self.stable_scale_,
             )
 
@@ -1053,8 +1097,11 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             # === Step 7: Verify + enforce confirmatory rules ===
             self._verify_confirmatory()
 
-            if (self.confirmatory_mode == "refit"
-                    and not self.confirmatory_all_active_ and confirmatory_rules):
+            if (
+                self.confirmatory_mode == "refit"
+                and not self.confirmatory_all_active_
+                and confirmatory_rules
+            ):
                 warnings.warn(
                     "Some confirmatory rules were zeroed by the solver. "
                     "Executing post-hoc constrained refit to enforce "
@@ -1073,7 +1120,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             _lap("refit_or_constrained")
             # === Step 7b: Sign check + absorption diagnostics ===
-            bound = [st["name"] for st in self.confirmatory_status_ if st.get("bound_active")]
+            bound = [
+                st["name"] for st in self.confirmatory_status_ if st.get("bound_active")
+            ]
             if bound and self.strict:
                 raise ConfirmatoryBoundError(
                     "strict=True: the expected_sign bound is active for "
@@ -1084,7 +1133,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             self._warn_sign_violations()
             self.confirmatory_diagnostics_ = (
                 self._compute_confirmatory_diagnostics(X_all, y)
-                if confirmatory_rules else []
+                if confirmatory_rules
+                else []
             )
 
             _lap("diagnostics")
@@ -1094,8 +1144,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 valid = ("isotonic", "sigmoid")
                 if self.calibration not in valid:
                     raise ValueError(
-                        f"calibration must be one of {valid}, "
-                        f"got '{self.calibration}'"
+                        f"calibration must be one of {valid}, got '{self.calibration}'"
                     )
                 from sklearn.calibration import CalibratedClassifierCV
 
@@ -1123,7 +1172,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         C, l1 = self._final_hyperparams()
         stable_idx = np.where(self.stable_mask_)[0]
         center = col_center[stable_idx]
-        scale = 1.0 / col_sd[stable_idx]          # standardise only, no rescaling by w
+        scale = 1.0 / col_sd[stable_idx]  # standardise only, no rescaling by w
         Zs = _solver_matrix(X_all[:, stable_idx], center, scale)
         Zs = Zs.toarray() if sparse.issparse(Zs) else np.asarray(Zs)
 
@@ -1146,7 +1195,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             elif nm.startswith("optional:"):
                 w[j] = self.optional_penalty
 
-        alpha = 0.0 if self.constrained_penalty == "ridge" else (0.5 if l1 is None else l1)
+        alpha = (
+            0.0 if self.constrained_penalty == "ridge" else (0.5 if l1 is None else l1)
+        )
         lam = 1.0 / (C * len(y))
         res = solve_block_logistic(Zs, y, lam, alpha, w, lo, hi)
         if not res["converged"]:
@@ -1155,19 +1206,28 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 f"iterations (KKT residual {res['kkt_residual']:.2e}).",
                 UserWarning,
             )
-        self.final_model_ = LinearLogit(res["intercept"], res["coef"], C, alpha,
-                                        info={k: res[k] for k in ("n_iter", "converged")})
+        self.final_model_ = LinearLogit(
+            res["intercept"],
+            res["coef"],
+            C,
+            alpha,
+            info={k: res[k] for k in ("n_iter", "converged")},
+        )
         self.stable_center_ = center
         self.stable_scale_ = scale
         self.constrained_info_ = {
-            "C": float(C), "l1_ratio": float(alpha), "lambda": float(lam),
+            "C": float(C),
+            "l1_ratio": float(alpha),
+            "lambda": float(lam),
             "penalty": self.constrained_penalty,
-            "n_iter": int(res["n_iter"]), "converged": bool(res["converged"]),
+            "n_iter": int(res["n_iter"]),
+            "converged": bool(res["converged"]),
             "kkt_residual": float(res["kkt_residual"]),
             "objective": float(res["objective"]),
             "bound_active": {
-                nm[len("confirmatory:"):]: bool(res["bound_active"][j])
-                for j, nm in enumerate(names) if nm.startswith("confirmatory:")
+                nm[len("confirmatory:") :]: bool(res["bound_active"][j])
+                for j, nm in enumerate(names)
+                if nm.startswith("confirmatory:")
             },
         }
 
@@ -1180,16 +1240,20 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         stable_indices = np.where(self.stable_mask_)[0]
 
         # Identify which stable features are confirmatory
-        confirmatory_mask_in_stable = np.array([
-            self.rule_names_[idx].startswith("confirmatory:")
-            for idx in stable_indices
-        ])
+        confirmatory_mask_in_stable = np.array(
+            [
+                self.rule_names_[idx].startswith("confirmatory:")
+                for idx in stable_indices
+            ]
+        )
 
         if not confirmatory_mask_in_stable.any():
             return
 
         X_stable_weighted = _solver_matrix(
-            X_all[:, self.stable_mask_], self.stable_center_, self.stable_scale_,
+            X_all[:, self.stable_mask_],
+            self.stable_center_,
+            self.stable_scale_,
         )
 
         try:
@@ -1290,9 +1354,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         expert_columns = []
         for rule in list(self.confirmatory_rules_) + list(self.optional_rules_):
-            col = np.asarray(
-                rule["evaluate"](X, self.feature_names_), dtype=np.float64
-            )
+            col = np.asarray(rule["evaluate"](X, self.feature_names_), dtype=np.float64)
             expert_columns.append(sparse.csc_matrix(col).T)
 
         if expert_columns:
@@ -1332,8 +1394,12 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         if not np.isfinite(C):
             C = self._DIAG_C_UNPENALISED
         model = _make_logistic(
-            penalty="l2", solver="lbfgs", max_iter=10000,
-            random_state=self._BASE_SEED, tol=self.tol, C=C,
+            penalty="l2",
+            solver="lbfgs",
+            max_iter=10000,
+            random_state=self._BASE_SEED,
+            tol=self.tol,
+            C=C,
         )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -1374,7 +1440,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Xs = Xs.toarray() if sparse.issparse(Xs) else np.asarray(Xs)
         Xs = Xs.astype(np.float64)
         center, ws = self._stable_transform()
-        Xt = (Xs - center) * ws          # matrix the solver sees
+        Xt = (Xs - center) * ws  # matrix the solver sees
         names = [self.rule_names_[i] for i in stable_idx]
         n, p = Xs.shape
 
@@ -1383,7 +1449,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         # Correlation matrix (zero-variance columns get correlation 0)
         Xc = Xs - Xs.mean(axis=0)
-        sd = np.sqrt((Xc ** 2).sum(axis=0))
+        sd = np.sqrt((Xc**2).sum(axis=0))
         safe_sd = np.where(sd > 1e-12, sd, 1.0)
         Z = Xc / safe_sd
         corr = Z.T @ Z
@@ -1394,7 +1460,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         Xf = X_all.toarray() if sparse.issparse(X_all) else np.asarray(X_all)
         Xf = Xf.astype(np.float64)
         Xfc = Xf - Xf.mean(axis=0)
-        sdf = np.sqrt((Xfc ** 2).sum(axis=0))
+        sdf = np.sqrt((Xfc**2).sum(axis=0))
         ok_f = sdf > 1e-12
         Zf = Xfc / np.where(ok_f, sdf, 1.0)
         stable_pos = {int(k): j for j, k in enumerate(stable_idx)}
@@ -1453,30 +1519,30 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 coef_wo = self._fit_fixed(Xt[:, others], y, C) * ws[others]
                 pos_in_others = {k: i for i, k in enumerate(others)}
                 for k in correlated:
-                    shifts[names[k]] = float(
-                        coef_wo[pos_in_others[k]] - coef_ref[k]
-                    )
+                    shifts[names[k]] = float(coef_wo[pos_in_others[k]] - coef_ref[k])
                 denom = max(abs(float(coef_ref[j])), 1e-12)
                 absorption = float(sum(abs(v) for v in shifts.values()) / denom)
 
             st = status_by_name.get(name, {})
-            diagnostics.append({
-                "name": name[len("confirmatory:"):],
-                "coefficient": float(true_coefs[j]),
-                "coefficient_reference_refit": float(coef_ref[j]),
-                "expected_sign": st.get("expected_sign"),
-                "sign_ok": st.get("sign_ok"),
-                "max_abs_corr": max_corr,
-                "most_correlated": most_corr,
-                "vif": vif,
-                "corr_threshold": float(corr_threshold),
-                "n_correlated": int(cand.size),
-                "correlated_coef_shift": shifts,
-                "absorption_ratio": absorption,
-                "n_displaced": len(displaced),
-                "displaced_rules": displaced,
-                "displaced_bootstrap_frequency": displaced_freq,
-            })
+            diagnostics.append(
+                {
+                    "name": name[len("confirmatory:") :],
+                    "coefficient": float(true_coefs[j]),
+                    "coefficient_reference_refit": float(coef_ref[j]),
+                    "expected_sign": st.get("expected_sign"),
+                    "sign_ok": st.get("sign_ok"),
+                    "max_abs_corr": max_corr,
+                    "most_correlated": most_corr,
+                    "vif": vif,
+                    "corr_threshold": float(corr_threshold),
+                    "n_correlated": int(cand.size),
+                    "correlated_coef_shift": shifts,
+                    "absorption_ratio": absorption,
+                    "n_displaced": len(displaced),
+                    "displaced_rules": displaced,
+                    "displaced_bootstrap_frequency": displaced_freq,
+                }
+            )
         return diagnostics
 
     def diagnose_confirmatory(self, X=None, y=None, corr_threshold=None):
@@ -1516,7 +1582,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             limits=self.thread_limit if self.deterministic else None
         ):
             return self._compute_confirmatory_diagnostics(
-                X_all, y, corr_threshold=corr_threshold,
+                X_all,
+                y,
+                corr_threshold=corr_threshold,
             )
 
     def _warn_sign_violations(self):
@@ -1620,13 +1688,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             name = self.rule_names_[idx]
             category = _rule_category(name)
 
-            rules.append({
-                "name": name,
-                "coefficient": coef,
-                "abs_importance": abs(coef),
-                "category": category,
-                "bootstrap_frequency": float(boot_freqs[idx]),
-            })
+            rules.append(
+                {
+                    "name": name,
+                    "coefficient": coef,
+                    "abs_importance": abs(coef),
+                    "category": category,
+                    "bootstrap_frequency": float(boot_freqs[idx]),
+                }
+            )
 
         rules.sort(key=lambda r: r["abs_importance"], reverse=True)
         return rules
@@ -1707,12 +1777,14 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             else:
                 jaccard = 1.0
 
-            path.append({
-                "threshold": t,
-                "n_selected": len(selected),
-                "selected_names": selected_names,
-                "jaccard_vs_current": jaccard,
-            })
+            path.append(
+                {
+                    "threshold": t,
+                    "n_selected": len(selected),
+                    "selected_names": selected_names,
+                    "jaccard_vs_current": jaccard,
+                }
+            )
 
         return path
 
@@ -1758,13 +1830,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 if abs(contrib) < 1e-12:
                     continue
                 name = self.rule_names_[idx]
-                contributions.append({
-                    "name": name,
-                    "contribution": contrib,
-                    "coefficient": coef,
-                    "feature_value": val,
-                    "category": _rule_category(name),
-                })
+                contributions.append(
+                    {
+                        "name": name,
+                        "contribution": contrib,
+                        "coefficient": coef,
+                        "feature_value": val,
+                        "category": _rule_category(name),
+                    }
+                )
             contributions.sort(key=lambda c: abs(c["contribution"]), reverse=True)
             all_reasons.append(contributions[:top_k])
 
@@ -1830,13 +1904,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         for j, idx in enumerate(stable_indices):
             if j >= len(true_coefs):
                 break
-            rules.append({
-                "name": self.rule_names_[idx],
-                "coefficient": float(true_coefs[j]),
-                "bootstrap_frequency": float(self.bootstrap_frequencies_[idx]),
-                "category": _rule_category(self.rule_names_[idx]),
-                "active": abs(true_coefs[j]) > 1e-10,
-            })
+            rules.append(
+                {
+                    "name": self.rule_names_[idx],
+                    "coefficient": float(true_coefs[j]),
+                    "bootstrap_frequency": float(self.bootstrap_frequencies_[idx]),
+                    "category": _rule_category(self.rule_names_[idx]),
+                    "active": abs(true_coefs[j]) > 1e-10,
+                }
+            )
 
         return {
             "model_type": "ExpertRuleFit",
@@ -1845,7 +1921,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "row_order": getattr(self, "row_order", "as_given"),
             "confirmatory_mode": getattr(self, "confirmatory_mode", "refit"),
             "confirmatory_bound_active": [
-                st["name"] for st in getattr(self, "confirmatory_status_", [])
+                st["name"]
+                for st in getattr(self, "confirmatory_status_", [])
                 if st.get("bound_active")
             ],
             "selection": getattr(self, "selection", "bootstrap"),
@@ -1911,7 +1988,9 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         if self.confirmatory_rules_:
             mode = getattr(self, "confirmatory_mode", "refit")
-            lines.append(f"\nConfirmatory rules ({len(self.confirmatory_rules_)}, mode={mode}):")
+            lines.append(
+                f"\nConfirmatory rules ({len(self.confirmatory_rules_)}, mode={mode}):"
+            )
             for s in self.confirmatory_status_:
                 status = "ACTIVE" if s["active"] else "INACTIVE"
                 sign = ""
@@ -1946,8 +2025,10 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 )
                 for d in diags:
                     vif = d["vif"]
-                    vif_txt = "n/a" if vif != vif else (
-                        "inf" if vif == float("inf") else f"{vif:.2f}"
+                    vif_txt = (
+                        "n/a"
+                        if vif != vif
+                        else ("inf" if vif == float("inf") else f"{vif:.2f}")
                     )
                     lines.append(
                         f"  {d['name']}: max|r|={d['max_abs_corr']:.2f}"
@@ -2001,6 +2082,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             File path for the saved model (e.g., ``"model.joblib"``).
         """
         import joblib
+
         check_is_fitted(self, ["base_rulefit_", "final_model_"])
 
         state = {
@@ -2026,9 +2108,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "confirmatory_status_": self.confirmatory_status_,
             "confirmatory_sign_ok_": getattr(self, "confirmatory_sign_ok_", True),
             "constrained_info_": getattr(self, "constrained_info_", None),
-            "confirmatory_diagnostics_": getattr(
-                self, "confirmatory_diagnostics_", []
-            ),
+            "confirmatory_diagnostics_": getattr(self, "confirmatory_diagnostics_", []),
         }
         joblib.dump(state, path)
 
@@ -2062,9 +2142,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         if "standardize" not in state["params"]:
             model.standardize = False  # saved before standardisation existed
         # Settings added later: record what older models were fitted with
-        for key, old in (("row_order", "as_given"), ("confirmatory_mode", "refit"),
-                         ("resampling", "bootstrap"), ("candidates", "rulefit"),
-                         ("selection", "bootstrap")):
+        for key, old in (
+            ("row_order", "as_given"),
+            ("confirmatory_mode", "refit"),
+            ("resampling", "bootstrap"),
+            ("candidates", "rulefit"),
+            ("selection", "bootstrap"),
+        ):
             if key not in state["params"]:
                 setattr(model, key, old)
         model.base_rulefit_ = state["base_rulefit_"]
@@ -2089,9 +2173,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         # Older saved models predate the sign check / diagnostics
         model.confirmatory_sign_ok_ = state.get("confirmatory_sign_ok_", True)
         model.constrained_info_ = state.get("constrained_info_")
-        model.confirmatory_diagnostics_ = state.get(
-            "confirmatory_diagnostics_", []
-        )
+        model.confirmatory_diagnostics_ = state.get("confirmatory_diagnostics_", [])
         model.confirmatory_rules_ = confirmatory_rules or []
         model.optional_rules_ = optional_rules or []
 
@@ -2107,7 +2189,10 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         for fn in self.feature_names_:
             names.append(f"linear:{fn}")
 
-        if hasattr(self.base_rulefit_, "rules_") and self.base_rulefit_.rules_ is not None:
+        if (
+            hasattr(self.base_rulefit_, "rules_")
+            and self.base_rulefit_.rules_ is not None
+        ):
             for i, rule in enumerate(self.base_rulefit_.rules_):
                 rule_str = str(rule)
                 names.append(f"rule[{i}]:{rule_str}")
@@ -2153,16 +2238,19 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             bound = bool(
                 (getattr(self, "constrained_info_", None) or {})
-                .get("bound_active", {}).get(rule["name"], False)
+                .get("bound_active", {})
+                .get(rule["name"], False)
             )
-            self.confirmatory_status_.append({
-                "name": rule["name"],
-                "active": active,
-                "coefficient": coef,
-                "expected_sign": expected,
-                "sign_ok": sign_ok,
-                "bound_active": bound,
-            })
+            self.confirmatory_status_.append(
+                {
+                    "name": rule["name"],
+                    "active": active,
+                    "coefficient": coef,
+                    "expected_sign": expected,
+                    "sign_ok": sign_ok,
+                    "bound_active": bound,
+                }
+            )
             if not active:
                 all_active = False
 

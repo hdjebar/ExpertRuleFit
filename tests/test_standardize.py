@@ -14,27 +14,32 @@ def raw_data():
     """Unscaled features (one lognormal column in the thousands)."""
     rng = np.random.RandomState(42)
     n = 300
-    X = np.column_stack([
-        rng.uniform(0, 5, n),
-        rng.lognormal(8, 1.5, n),
-        rng.beta(2, 5, n),
-        rng.beta(1.5, 8, n),
-    ])
-    logit = 0.8 * (X[:, 2] > 0.4) + 0.5 * (X[:, 3] > 0.15) + 0.4 * (X[:, 0] - 2.5) \
-        + rng.normal(0, 0.3, n) - 0.5
+    X = np.column_stack(
+        [
+            rng.uniform(0, 5, n),
+            rng.lognormal(8, 1.5, n),
+            rng.beta(2, 5, n),
+            rng.beta(1.5, 8, n),
+        ]
+    )
+    logit = (
+        0.8 * (X[:, 2] > 0.4)
+        + 0.5 * (X[:, 3] > 0.15)
+        + 0.4 * (X[:, 0] - 2.5)
+        + rng.normal(0, 0.3, n)
+        - 0.5
+    )
     y = (logit > 0).astype(int)
     return X, y, ["risk", "volume", "cash", "night"]
 
 
-CONF = [{"name": "risk>2.5",
-         "evaluate": lambda X, fn: (X[:, 0] > 2.5).astype(float)}]
+CONF = [{"name": "risk>2.5", "evaluate": lambda X, fn: (X[:, 0] > 2.5).astype(float)}]
 
 
 @pytest.fixture(scope="module")
 def fitted(raw_data):
     X, y, fn = raw_data
-    return ExpertRuleFit(**FAST).fit(X, y, feature_names=fn,
-                                     confirmatory_rules=CONF)
+    return ExpertRuleFit(**FAST).fit(X, y, feature_names=fn, confirmatory_rules=CONF)
 
 
 def test_defaults():
@@ -59,10 +64,12 @@ def test_original_scale_logit_matches_predict_proba(fitted, raw_data):
     X, _, _ = raw_data
     Z = fitted._build_stable_raw_matrix(X)
     logit = fitted._get_true_intercept() + Z @ fitted._get_true_coefficients()
-    np.testing.assert_allclose(1 / (1 + np.exp(-logit)),
-                               fitted.predict_proba(X)[:, 1], rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(
+        1 / (1 + np.exp(-logit)), fitted.predict_proba(X)[:, 1], rtol=1e-8, atol=1e-10
+    )
     assert fitted.audit_bundle()["intercept"] == pytest.approx(
-        fitted._get_true_intercept())
+        fitted._get_true_intercept()
+    )
 
 
 def test_reason_codes_add_up_to_logit(fitted, raw_data):
@@ -72,7 +79,7 @@ def test_reason_codes_add_up_to_logit(fitted, raw_data):
     for r, p in zip(reasons, p1):
         logit = fitted._get_true_intercept() + sum(c["contribution"] for c in r)
         assert logit == pytest.approx(np.log(p / (1 - p)), rel=1e-6, abs=1e-8)
-        for c in r:   # feature values are on the original scale
+        for c in r:  # feature values are on the original scale
             if c["category"] in ("confirmatory", "rule"):
                 assert c["feature_value"] in (0.0, 1.0)
 
@@ -85,14 +92,14 @@ def test_invariant_to_feature_units(raw_data):
     m1 = ExpertRuleFit(**FAST).fit(X, y, feature_names=fn)
     m2 = ExpertRuleFit(**FAST).fit(X2, y, feature_names=fn)
     assert len(m1.get_selected_rules()) == len(m2.get_selected_rules())
-    np.testing.assert_allclose(m1.predict_proba(X), m2.predict_proba(X2),
-                               rtol=1e-4, atol=1e-6)
+    np.testing.assert_allclose(
+        m1.predict_proba(X), m2.predict_proba(X2), rtol=1e-4, atol=1e-6
+    )
 
 
 def test_deterministic(raw_data, fitted):
     X, y, fn = raw_data
-    m2 = ExpertRuleFit(**FAST).fit(X, y, feature_names=fn,
-                                   confirmatory_rules=CONF)
+    m2 = ExpertRuleFit(**FAST).fit(X, y, feature_names=fn, confirmatory_rules=CONF)
     np.testing.assert_array_equal(fitted.predict_proba(X), m2.predict_proba(X))
     assert fitted.get_selected_rules() == m2.get_selected_rules()
 

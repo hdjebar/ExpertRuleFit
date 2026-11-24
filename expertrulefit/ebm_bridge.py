@@ -30,8 +30,13 @@ import numpy as np
 
 
 def discover_interaction_rules(
-    X, y, feature_names, top_k=3, rule_type="optional",
-    max_interactions=10, random_state=42,
+    X,
+    y,
+    feature_names,
+    top_k=3,
+    rule_type="optional",
+    max_interactions=10,
+    random_state=42,
 ):
     """Discover interaction rules from EBM and format for ExpertRuleFit.
 
@@ -87,9 +92,7 @@ def discover_interaction_rules(
         import pandas as pd
         from interpret.glassbox import ExplainableBoostingClassifier
     except ImportError:
-        raise ImportError(
-            "interpret and pandas required: pip install interpret pandas"
-        )
+        raise ImportError("interpret and pandas required: pip install interpret pandas")
 
     if rule_type not in ("confirmatory", "optional"):
         raise ValueError(
@@ -113,12 +116,14 @@ def discover_interaction_rules(
     importances = ebm.term_importances()
     for i, term_feats in enumerate(ebm.term_features_):
         if len(term_feats) == 2:
-            interactions.append({
-                "index": i,
-                "features": term_feats,
-                "name": ebm.term_names_[i],
-                "importance": importances[i],
-            })
+            interactions.append(
+                {
+                    "index": i,
+                    "features": term_feats,
+                    "name": ebm.term_names_[i],
+                    "importance": importances[i],
+                }
+            )
 
     # Sort by importance, take top_k
     interactions.sort(key=lambda x: x["importance"], reverse=True)
@@ -147,7 +152,11 @@ def discover_interaction_rules(
                 f"({direction}, imp={inter['importance']:.3f})"
             )
             rule_fn = _make_rule_fn(
-                feat_a, thresh_a, feat_b, thresh_b, invert=True,
+                feat_a,
+                thresh_a,
+                feat_b,
+                thresh_b,
+                invert=True,
             )
         else:
             rule_name = (
@@ -156,14 +165,16 @@ def discover_interaction_rules(
             )
             rule_fn = _make_rule_fn(feat_a, thresh_a, feat_b, thresh_b)
 
-        rules.append({
-            "name": rule_name,
-            "evaluate": rule_fn,
-            "category": rule_type,
-            # Provenance, so audits can tell data-discovered rules apart
-            # from expert-imposed ones.
-            "source": "ebm_discovered",
-        })
+        rules.append(
+            {
+                "name": rule_name,
+                "evaluate": rule_fn,
+                "category": rule_type,
+                # Provenance, so audits can tell data-discovered rules apart
+                # from expert-imposed ones.
+                "source": "ebm_discovered",
+            }
+        )
 
     return rules, ebm
 
@@ -214,10 +225,14 @@ def _make_rule_fn(feat_a, thresh_a, feat_b, thresh_b, *, invert=False):
         If True, return ``1 - base_rule`` so that the rule fires when the
         joint condition is *not* met (used for "protective" direction).
     """
+
     def evaluate(X, feature_names):
         X = np.asarray(X, dtype=np.float64)
-        base = ((X[:, feat_a] > thresh_a) & (X[:, feat_b] > thresh_b)).astype(np.float64)
+        base = ((X[:, feat_a] > thresh_a) & (X[:, feat_b] > thresh_b)).astype(
+            np.float64
+        )
         return (1.0 - base) if invert else base
+
     return evaluate
 
 

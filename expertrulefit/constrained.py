@@ -31,23 +31,39 @@ def _loss_grad(b0, beta, Z, s, n):
     m = b0 + Z @ beta
     sm = s * m
     loss = np.logaddexp(0.0, -sm).sum() / n
-    r = -s * expit(-sm) / n            # d loss / d m
+    r = -s * expit(-sm) / n  # d loss / d m
     return loss, float(r.sum()), Z.T @ r
 
 
 def _penalty(beta, lam, w, alpha):
-    return lam * float(np.sum(w * (alpha * np.abs(beta) + 0.5 * (1 - alpha) * beta ** 2)))
+    return lam * float(np.sum(w * (alpha * np.abs(beta) + 0.5 * (1 - alpha) * beta**2)))
 
 
 def _prox(v, t, lam, w, alpha, lo, hi):
     """Prox of t * penalty followed by the box (exact: penalty is 0 where boxed)."""
     thr = t * lam * w * alpha
-    out = np.sign(v) * np.maximum(np.abs(v) - thr, 0.0) / (1.0 + t * lam * w * (1 - alpha))
+    out = (
+        np.sign(v)
+        * np.maximum(np.abs(v) - thr, 0.0)
+        / (1.0 + t * lam * w * (1 - alpha))
+    )
     return np.clip(out, lo, hi)
 
 
-def solve_block_logistic(Z, y, lam, alpha, w, lower, upper, *, tol=1e-9,
-                         max_iter=200_000, b0_init=0.0, beta_init=None):
+def solve_block_logistic(
+    Z,
+    y,
+    lam,
+    alpha,
+    w,
+    lower,
+    upper,
+    *,
+    tol=1e-9,
+    max_iter=200_000,
+    b0_init=0.0,
+    beta_init=None,
+):
     """Solve the block-penalised, box-constrained logistic problem.
 
     Parameters
@@ -75,11 +91,17 @@ def solve_block_logistic(Z, y, lam, alpha, w, lower, upper, *, tol=1e-9,
     hi = np.asarray(upper, dtype=np.float64)
 
     A = np.column_stack([np.ones(n), Z])
-    L = float(np.linalg.norm(A, 2) ** 2 / (4.0 * n)) + lam * float(np.max(w * (1 - alpha), initial=0.0))
+    L = float(np.linalg.norm(A, 2) ** 2 / (4.0 * n)) + lam * float(
+        np.max(w * (1 - alpha), initial=0.0)
+    )
     t = 1.0 / max(L, 1e-12)
 
     b0 = float(b0_init)
-    beta = np.zeros(p) if beta_init is None else np.clip(np.asarray(beta_init, float), lo, hi)
+    beta = (
+        np.zeros(p)
+        if beta_init is None
+        else np.clip(np.asarray(beta_init, float), lo, hi)
+    )
     yb0, ybeta = b0, beta.copy()
     theta = 1.0
     converged = False
@@ -105,9 +127,13 @@ def solve_block_logistic(Z, y, lam, alpha, w, lower, upper, *, tol=1e-9,
     loss, g0, g = _loss_grad(b0, beta, Z, s, n)
     kkt, bound_active = _kkt(beta, g0, g, lam, alpha, w, lo, hi)
     return {
-        "intercept": b0, "coef": beta, "n_iter": it, "converged": converged,
+        "intercept": b0,
+        "coef": beta,
+        "n_iter": it,
+        "converged": converged,
         "objective": loss + _penalty(beta, lam, w, alpha),
-        "kkt_residual": kkt, "bound_active": bound_active,
+        "kkt_residual": kkt,
+        "bound_active": bound_active,
     }
 
 
@@ -123,8 +149,9 @@ def _kkt(beta, g0, g, lam, alpha, w, lo, hi, atol=1e-10):
     free = _prox(beta - g, 1.0, lam, w, alpha, -np.inf, np.inf)
     boxed = np.clip(free, lo, hi)
     resid = max(abs(g0), float(np.max(np.abs(beta - boxed), initial=0.0)))
-    bound_active = (((beta <= lo + atol) & (free < lo - atol))
-                    | ((beta >= hi - atol) & (free > hi + atol)))
+    bound_active = ((beta <= lo + atol) & (free < lo - atol)) | (
+        (beta >= hi - atol) & (free > hi + atol)
+    )
     return resid, bound_active
 
 
