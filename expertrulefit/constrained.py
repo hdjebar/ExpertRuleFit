@@ -24,7 +24,7 @@ result is deterministic for a given input and BLAS configuration.
 import numpy as np
 from scipy.special import expit
 
-__all__ = ["solve_block_logistic", "LinearLogit"]
+__all__ = ["LinearLogit", "PlattLogit", "solve_block_logistic"]
 
 
 def _loss_grad(b0, beta, Z, s, n):
@@ -169,6 +169,26 @@ class LinearLogit:
     def decision_function(self, X):
         m = X @ self.coef_[0] if not hasattr(X, "toarray") else X.dot(self.coef_[0])
         return np.asarray(m).ravel() + self.intercept_[0]
+
+    def predict_proba(self, X):
+        p = expit(self.decision_function(X))
+        return np.column_stack([1.0 - p, p])
+
+    def predict(self, X):
+        return (self.decision_function(X) > 0).astype(np.float64)
+
+
+class PlattLogit:
+    """Platt-scaled wrapper: P(y=1) = expit(a * eta(x) + b), with a > 0."""
+
+    def __init__(self, base, a, b):
+        self.base = base
+        self.a = float(a)
+        self.b = float(b)
+        self.classes_ = base.classes_
+
+    def decision_function(self, X):
+        return self.a * self.base.decision_function(X) + self.b
 
     def predict_proba(self, X):
         p = expit(self.decision_function(X))

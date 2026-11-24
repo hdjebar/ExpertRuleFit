@@ -12,7 +12,7 @@
 - RuleFit returned a different rule set for each of 100 seeds on all three datasets; ExpertRuleFit returned identical rules and probabilities in 3 of 3 runs (hash-checked).
 - Confirmatory rules are always kept in the model. A rule without a declared sign gets a non-zero coefficient unless degenerate. In constrained mode (default since 0.8.0), a rule whose declared sign the data contradict is held at zero and flagged; it is then not "included" under Definition 1.
 - **Allowed for constrained mode only (decided 23/11/2026):** "respects the sign declared by the expert; when the data contradict it, the coefficient is held at zero and flagged." 
-- 104 automated tests (pinned stack, 0.8.0, 23/11/2026); open source. Public texts still saying "39 tests" are out of date but not wrong at the time written.
+- 124 automated tests (pinned stack, 0.8.1, 24/11/2026; 104 at 0.8.0); open source. Public texts still saying "39 tests" are out of date but not wrong at the time written.
 
 ## Not allowed until Phase B/C results exist
 - "Stable" or "stability" without the qualifier "across seeds".

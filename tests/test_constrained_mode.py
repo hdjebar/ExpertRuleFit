@@ -120,7 +120,7 @@ def test_save_load(bound_model, flip_data, tmp_path):
     [
         dict(confirmatory_mode="exact"),
         dict(constrained_penalty="lasso"),
-        dict(confirmatory_mode="constrained", calibration="sigmoid"),
+        dict(confirmatory_mode="constrained", calibration="isotonic"),
     ],
 )
 def test_invalid_options(kw):

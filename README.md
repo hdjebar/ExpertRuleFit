@@ -11,7 +11,7 @@ The *confirmatory / optional* terminology, the idea of exempting confirmatory ru
 
 **What this library adds** to Expert RuleFit:
 
-1. **Determinism by design**: internal seeds fixed and the user seed ignored, canonical row order (since 0.8.0, any permutation of the training rows gives the same model), a pinned container recipe, and an explicit execution envelope.
+1. **Determinism by design**: internal seeds fixed and the user seed ignored, canonical row and column order (rows since 0.8.0, columns by name since 0.8.1: any permutation of the training rows or of the columns gives the same model), a pinned container recipe, and an explicit execution envelope.
 2. **A sign-constrained confirmatory block** (`confirmatory_mode="constrained"`, the default since 0.8.0): one convex problem with confirmatory coefficients unpenalised and bounded by the expert's expected sign. When the data contradict the sign, the coefficient is held at zero and flagged.
 3. **Diagnostics and fingerprints**: sign checks, absorption diagnostics (correlated rules a confirmatory rule displaces), and SHA-256 fingerprints of rules, coefficients and predictions in an audit bundle.
 4. **A conditioning analysis** of penalty weighting by column rescaling: very small weights make saga stop far from the optimum without a warning; standardisation and the weight choice that avoid it.
@@ -27,9 +27,9 @@ Standard RuleFit uses Lasso (L1) for rule selection, which is **inherently unsta
 
 ## The Solution
 
-The pipeline (defaults of version 0.8.0):
+The pipeline (defaults of version 0.8.1):
 
-0. **Canonical row order** — training rows are sorted before fitting, so any permutation of the same rows gives the same model (`row_order="canonical"`).
+0. **Canonical column and row order** — columns are sorted by feature name (`column_order="canonical"`, since 0.8.1), then training rows are sorted, so any permutation of the same rows or columns gives the same model (`row_order="canonical"`).
 1. **Fixed-seed rule generation** — a gradient-boosting ensemble with internal seed 42 (user `random_state` ignored). By default the candidates are the rules kept by imodels' RuleFit, **which runs its own L1 (Lasso) path and returns at most `max_rules` rules before ExpertRuleFit or the expert rules are involved**. `candidates="trees"` takes every distinct rule from the same trees instead, so selection happens only in the steps below.
 2. **Expert rule augmentation** — confirmatory and optional expert rules, as in Expert RuleFit (Ebner); optional rules get a reduced penalty.
 3. **Selection-frequency filter** — 10 elastic-net logistic fits on stratified half-samples drawn without replacement in complementary pairs (`resampling="subsample"`; the n-out-of-n bootstrap of earlier versions is `resampling="bootstrap"`); columns selected in ≥ 80 % of the fits are kept, confirmatory rules always. **Off by default since 0.8.0** (`selection="none"`): in the B1 study it made the model less stable (see Validation Results); `selection="bootstrap"` turns it on.
@@ -41,6 +41,8 @@ Guaranteed reproducible within a deterministic execution envelope: **pinned depe
 > **Container deployment:** For a step-by-step guide to enforcing this guarantee via Docker (pinned digests, locked wheels, deterministic numerics, schema validation, auditable fingerprints), see **[docs/REPRODUCIBILITY_CONTAINERS.md](docs/REPRODUCIBILITY_CONTAINERS.md)**.
 
 ## Validation Results
+
+> **Version note (24/11/2026):** the figures below were produced with 0.8.0. Version 0.8.1 sorts the columns by name by default, which changes the fitted models on these datasets; the Table 1 and B1 reruns under 0.8.1 run in GitHub Actions (`.github/workflows/experiments.yml`) and will replace these figures once committed.
 
 Seed sensitivity on **3 credit-scoring datasets** (one stratified 80/20 split, preprocessing fitted on the training split; pinned stack in [`docker/`](docker/): Python 3.11, scikit-learn 1.7.2, imodels 3.0.4). RuleFit is fitted with 100 seeds. ExpertRuleFit 0.8.0 (library defaults, no expert rules) ignores the seed by design, so it is run 3 times in separate processes and checked for bitwise-identical output (rule-set hash and SHA-256 of test probabilities).
 
@@ -157,6 +159,7 @@ A bound-active rule is reported, not hidden: its coefficient is 0, so it is not 
 
 - `erf.fingerprint(X_test)` returns SHA-256 hashes of the active rule set, of the intercept and coefficients, and of the predicted probabilities on `X_test`. `audit_bundle(X_reference=X_test)` includes them. Two runs are the same model if, and only if, the fingerprints match.
 - **Row order.** Boosting subsamples, resampling draws and CV folds index rows by position, so with `row_order="as_given"` shuffling the training rows changes the model much as changing a seed would (see `experiments/results/row_order/`). The default since 0.8.0, `row_order="canonical"`, sorts the rows deterministically before fitting: any permutation of the same rows gives bitwise-identical output. Expert rules must therefore be row-wise functions of the features.
+- **Column order (since 0.8.1).** The column order changed the fit as well (rule names, the row sort and the trees; FINDINGS §17), so `column_order="canonical"` (default) sorts the columns by feature name before anything else: any permutation of the columns, with `feature_names` permuted alike, gives bitwise-identical output (`tests/test_columns_calibration.py`, `experiments/results/hashcheck_v081/`). Names must be unique. Expert rules are still evaluated on X in the order given to `fit`, so `RuleSpec` rules and callables that look columns up by name work unchanged; pass X to `predict` in that same order. `feature_names_` is the canonical order, `input_feature_names_` the order given, `column_order_` the permutation; the audit bundle records all three and `fingerprint()` adds `schema_sha256` (column order mode and canonical names). `column_order="as_given"` restores 0.8.0 behaviour.
 
 ### With EBM-Discovered Interactions (automated pipeline)
 
@@ -207,7 +210,7 @@ explanations = dm.explain(X_test[:1])
 
 ## Prediction & Classification
 
-ExpertRuleFit is a **binary classifier** (classes {0, 1}). It outputs hard labels and logistic probabilities; post-hoc calibration is optional (`calibration="sigmoid"` or `"isotonic"`).
+ExpertRuleFit is a **binary classifier** (classes {0, 1}). It outputs hard labels and logistic probabilities; post-hoc calibration is optional (`calibration="sigmoid"` or `"isotonic"`; in the default constrained mode only `"sigmoid"`).
 
 ### How Prediction Works
 
@@ -237,7 +240,7 @@ proba = erf.predict_proba(X_test)  # shape (n_samples, 2)
 p_default = proba[:, 1]  # P(y=1) — e.g., probability of default
 ```
 
-Probabilities are logistic-regression outputs; their calibration has not yet been evaluated on the benchmark datasets. If calibrated scores matter (e.g. PD estimates), set `calibration="sigmoid"` or `"isotonic"` (in 0.8.0 this requires `confirmatory_mode="refit"`) and check reliability on held-out data. Each row sums to 1.0. Use `proba[:, 1]` for AUC, ranking, and threshold tuning.
+Probabilities are logistic-regression outputs; their calibration has not yet been evaluated on the benchmark datasets. If calibrated scores matter (e.g. PD estimates), set `calibration="sigmoid"` or `"isotonic"` and check reliability on held-out data. **In the default `confirmatory_mode="constrained"` only `"sigmoid"` is allowed** (since 0.8.1): Platt scaling maps the block's log-odds η(x) to a·η(x) + b, with a and b fitted on out-of-fold log-odds (5 stratified folds, same penalty, weights and sign bounds) and a > 0, so the calibrated log-odds stay additive over the rules and every term keeps its sign; the fitted coefficients are unchanged and a, b are in `calibration_info_` and the audit bundle. `"isotonic"` is monotone but not affine, so it would break that additivity, and it raises `ValueError` in constrained mode (use `confirmatory_mode="refit"`). Each row sums to 1.0. Use `proba[:, 1]` for AUC, ranking, and threshold tuning.
 
 ### Custom Decision Threshold
 
@@ -373,9 +376,9 @@ Random trees (seed-dependent) → Lasso → rule selection
 Different seed → different trees → different rules
 ```
 
-### ExpertRuleFit (deterministic, 0.8.0 defaults)
+### ExpertRuleFit (deterministic, 0.8.1 defaults)
 ```
-Sort rows (canonical order)
+Sort columns by name, then rows (canonical order)
   → Fixed-seed GradientBoosting (BASE_SEED=42) → RuleFit's rules + linear features
   → augment with expert rules (adaptive penalty weighting)
   → final LogisticRegressionCV (elastic net)

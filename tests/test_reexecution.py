@@ -50,7 +50,7 @@ def test_canonical_row_order_is_permutation_invariant(data, canonical, perm_seed
 def test_fingerprint_contents_and_bundle(data, canonical):
     X, _, _ = data
     fp = canonical.fingerprint()
-    assert set(fp) == {"rules_sha256", "coefficients_sha256"}
+    assert set(fp) == {"rules_sha256", "coefficients_sha256", "schema_sha256"}
     fpx = canonical.fingerprint(X)
     assert fpx["n_predictions"] == len(X)
     assert all(
