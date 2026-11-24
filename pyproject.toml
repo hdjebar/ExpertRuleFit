@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Reproducible interpretable ML for regulated banking — EBM-grounded rules that survive any regularization"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "Djebar Hammouche" },
 ]
@@ -79,7 +79,7 @@ filterwarnings = [
 [tool.ruff]
 # Pinned rule set: the CI ruff version is pinned too (.github/workflows/ci.yml),
 # so new upstream default rules cannot break the lint job.
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
