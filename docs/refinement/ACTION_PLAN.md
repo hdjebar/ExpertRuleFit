@@ -67,6 +67,7 @@ Work on a branch (`refinement/<item>`), one PR per phase, tests green before mer
 ### C4. Runtime and cross-machine determinism
 - **Do.** Wall-clock and peak memory vs n, number of candidate rules and B, single-threaded. Run the container on two CPU types and compare output hashes.
 - **Done when.** Runtime table + a statement of verified cross-machine identity (or its limits).
+- **Status (24/11/2026).** The cross-machine part is measured (FINDINGS §20): on three CPU models the rules and AUC were identical and the probability bytes were not. "Same CPU model" is now an explicit condition of the guarantee (paper §3, README; author's decision). **Still to do in phase C:** pin the BLAS kernel (e.g. `OPENBLAS_CORETYPE`, or a reference BLAS build in the image) and retest bitwise identity across CPU models. Then decide whether the condition can be dropped.
 
 ## Phase D — paper v2
 

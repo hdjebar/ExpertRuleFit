@@ -132,13 +132,17 @@ def main():
         from expertrulefit.expert_rulefit import build_rule_feature_matrix
         from scipy import sparse
 
-        X_rules = build_rule_feature_matrix(erf.base_rulefit_, x)
+        X_rules = build_rule_feature_matrix(erf.base_rulefit_, x[:, erf.column_order_])
         expert_cols = []
         for rule in erf.confirmatory_rules_:
-            col = np.asarray(rule["evaluate"](x, erf.feature_names_), dtype=np.float64)
+            col = np.asarray(
+                rule["evaluate"](x, erf.input_feature_names_), dtype=np.float64
+            )
             expert_cols.append(sparse.csc_matrix(col).T)
         for rule in erf.optional_rules_:
-            col = np.asarray(rule["evaluate"](x, erf.feature_names_), dtype=np.float64)
+            col = np.asarray(
+                rule["evaluate"](x, erf.input_feature_names_), dtype=np.float64
+            )
             expert_cols.append(sparse.csc_matrix(col).T)
 
         if expert_cols:

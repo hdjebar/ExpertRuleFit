@@ -585,6 +585,19 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         boosting subsamples, the bootstrap draws and the (unshuffled) CV
         folds index rows by position. Default ``"canonical"`` since 0.8.0.
 
+    column_order : {"canonical", "as_given"}, default="canonical"
+        ``"canonical"`` reorders the feature columns by name (``sorted``
+        on ``str(name)``) before anything else, so any permutation of the
+        columns (with ``feature_names`` permuted alike) gives
+        bitwise-identical output. Names must then be unique. Expert rules
+        are still evaluated on X in the order given to :meth:`fit`, with
+        those names, and prediction expects that same input order.
+        ``feature_names_`` holds the canonical order (the order of the
+        linear terms), ``input_feature_names_`` the order given, and
+        ``column_order_`` the permutation (``X[:, column_order_]``).
+        ``"as_given"`` keeps the input order (before 0.8.1). Default
+        ``"canonical"`` since 0.8.1.
+
     resampling : {"subsample", "bootstrap"}, default="subsample"
         Draws for the selection-frequency filter. ``"subsample"``:
         complementary pairs of stratified half-samples without replacement
@@ -621,9 +634,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         calibration (logistic outputs used directly). Options:
 
         - ``"isotonic"`` — non-parametric isotonic regression
+          (``confirmatory_mode="refit"`` only)
         - ``"sigmoid"`` — Platt scaling (parametric logistic fit)
 
-        Uses ``CalibratedClassifierCV`` with 5-fold CV on training data.
+        In ``"refit"`` mode this uses ``CalibratedClassifierCV`` with 5-fold
+        CV on training data. In ``"constrained"`` mode only ``"sigmoid"`` is
+        allowed (since 0.8.1): out-of-fold log-odds of the constrained block
+        are mapped by ``a * eta + b`` with ``a > 0`` (see
+        ``calibration_info_``), which keeps the log-odds additive and every
+        term's sign; isotonic raises ``ValueError``.
 
     Attributes
     ----------
@@ -694,6 +713,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         thread_limit=1,
         standardize=True,
         row_order="canonical",
+        column_order="canonical",
         confirmatory_mode="constrained",
         constrained_penalty="elasticnet",
         selection="none",
@@ -717,6 +737,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         self.thread_limit = thread_limit
         self.standardize = standardize
         self.row_order = row_order
+        self.column_order = column_order
         self.confirmatory_mode = confirmatory_mode
         self.constrained_penalty = constrained_penalty
         self.selection = selection
@@ -793,7 +814,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                         f"be +1, -1 or None, got {es!r}"
                     )
 
-            result = rule["evaluate"](X, self.feature_names_)
+            result = rule["evaluate"](X, self._input_names())
             result = np.asarray(result, dtype=np.float64).ravel()
             if result.shape[0] != X.shape[0]:
                 raise ValueError(
@@ -846,7 +867,28 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         if feature_names is None:
             feature_names = [f"feature_{i}" for i in range(X.shape[1])]
-        self.feature_names_ = list(feature_names)
+        feature_names = list(feature_names)
+        if len(feature_names) != X.shape[1]:
+            raise ValueError(
+                f"feature_names has {len(feature_names)} entries, X has "
+                f"{X.shape[1]} columns"
+            )
+        if self.column_order not in ("as_given", "canonical"):
+            raise ValueError(
+                "column_order must be 'as_given' or 'canonical', "
+                f"got {self.column_order!r}"
+            )
+        self.input_feature_names_ = feature_names
+        if self.column_order == "canonical":
+            keys = [str(f) for f in feature_names]
+            if len(set(keys)) != len(keys):
+                raise ValueError("column_order='canonical' needs unique feature names")
+            self.column_order_ = np.array(
+                sorted(range(len(keys)), key=keys.__getitem__), dtype=np.intp
+            )
+        else:
+            self.column_order_ = np.arange(len(feature_names), dtype=np.intp)
+        self.feature_names_ = [feature_names[j] for j in self.column_order_]
 
         confirmatory_rules = confirmatory_rules or []
         optional_rules = optional_rules or []
@@ -876,21 +918,31 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 "constrained_penalty must be 'elasticnet' or 'ridge', "
                 f"got {self.constrained_penalty!r}"
             )
-        if self.confirmatory_mode == "constrained" and self.calibration is not None:
+        if self.confirmatory_mode == "constrained" and self.calibration not in (
+            None,
+            "sigmoid",
+        ):
             raise ValueError(
-                "calibration is not supported with confirmatory_mode='constrained'"
+                "confirmatory_mode='constrained' supports calibration=None or "
+                f"'sigmoid' (Platt scaling keeps the log-odds additive), got "
+                f"{self.calibration!r}; use confirmatory_mode='refit' for "
+                "isotonic calibration"
             )
         if self.row_order not in ("as_given", "canonical"):
             raise ValueError(
                 f"row_order must be 'as_given' or 'canonical', got {self.row_order!r}"
             )
+        # X_in: columns as given (expert rules are evaluated on it);
+        # X: canonical column order (trees, linear terms, row sort).
+        X_in = X
+        X = X_in[:, self.column_order_]
         if self.row_order == "canonical":
             # np.lexsort: last key is primary -> feature 0 first, label last
             keys = [y] + [X[:, j] for j in range(X.shape[1] - 1, -1, -1)]
             order = np.lexsort(keys)
-            X, y = X[order], y[order]
-        self._validate_expert_rules(confirmatory_rules, X, "Confirmatory")
-        self._validate_expert_rules(optional_rules, X, "Optional")
+            X, X_in, y = X[order], X_in[order], y[order]
+        self._validate_expert_rules(confirmatory_rules, X_in, "Confirmatory")
+        self._validate_expert_rules(optional_rules, X_in, "Optional")
 
         # Deterministic execution envelope: when deterministic=True (default),
         # clamp all BLAS/OpenMP thread pools to self.thread_limit and force
@@ -946,7 +998,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             for rule in confirmatory_rules:
                 col = np.asarray(
-                    rule["evaluate"](X, self.feature_names_), dtype=np.float64
+                    rule["evaluate"](X_in, self.input_feature_names_), dtype=np.float64
                 )
                 expert_columns.append(sparse.csc_matrix(col).T)
                 expert_names.append(f"confirmatory:{rule['name']}")
@@ -954,7 +1006,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
             for rule in optional_rules:
                 col = np.asarray(
-                    rule["evaluate"](X, self.feature_names_), dtype=np.float64
+                    rule["evaluate"](X_in, self.input_feature_names_), dtype=np.float64
                 )
                 expert_columns.append(sparse.csc_matrix(col).T)
                 expert_names.append(f"optional:{rule['name']}")
@@ -1140,24 +1192,28 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             _lap("diagnostics")
             # === Step 8 (optional): Post-hoc probability calibration ===
             self.calibrator_ = None
+            self.calibration_info_ = None
             if self.calibration is not None:
                 valid = ("isotonic", "sigmoid")
                 if self.calibration not in valid:
                     raise ValueError(
                         f"calibration must be one of {valid}, got '{self.calibration}'"
                     )
-                from sklearn.calibration import CalibratedClassifierCV
-
                 logger.info(
                     "Step 8: Post-hoc calibration (method=%s)",
                     self.calibration,
                 )
-                self.calibrator_ = CalibratedClassifierCV(
-                    self.final_model_,
-                    method=self.calibration,
-                    cv=5,
-                )
-                self.calibrator_.fit(X_stable_weighted, y)
+                if self.confirmatory_mode == "constrained":
+                    self._fit_platt_constrained(X_all, y, col_center, col_sd)
+                else:
+                    from sklearn.calibration import CalibratedClassifierCV
+
+                    self.calibrator_ = CalibratedClassifierCV(
+                        self.final_model_,
+                        method=self.calibration,
+                        cv=5,
+                    )
+                    self.calibrator_.fit(X_stable_weighted, y)
 
         return self
 
@@ -1165,10 +1221,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     # Post-hoc confirmatory enforcement
     # ------------------------------------------------------------------
 
-    def _fit_constrained(self, X_all, y, col_center, col_sd):
-        """Replace the final model by the block-penalised, sign-bounded solve."""
-        from .constrained import LinearLogit, solve_block_logistic
-
+    def _constrained_problem(self, X_all, col_center, col_sd):
+        """Standardised stable matrix, weights and sign bounds of the block."""
         C, l1 = self._final_hyperparams()
         stable_idx = np.where(self.stable_mask_)[0]
         center = col_center[stable_idx]
@@ -1197,6 +1251,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
 
         alpha = (
             0.0 if self.constrained_penalty == "ridge" else (0.5 if l1 is None else l1)
+        )
+        return Zs, names, center, scale, C, alpha, w, lo, hi
+
+    def _fit_constrained(self, X_all, y, col_center, col_sd):
+        """Replace the final model by the block-penalised, sign-bounded solve."""
+        from .constrained import LinearLogit, solve_block_logistic
+
+        Zs, names, center, scale, C, alpha, w, lo, hi = self._constrained_problem(
+            X_all, col_center, col_sd
         )
         lam = 1.0 / (C * len(y))
         res = solve_block_logistic(Zs, y, lam, alpha, w, lo, hi)
@@ -1230,6 +1293,60 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
                 if nm.startswith("confirmatory:")
             },
         }
+
+    _PLATT_FOLDS = 5
+
+    def _fit_platt_constrained(self, X_all, y, col_center, col_sd):
+        """Platt scaling of the constrained block (calibration="sigmoid").
+
+        Out-of-fold log-odds come from refitting the same block problem
+        (same C, l1_ratio, weights and sign bounds) on stratified folds of
+        the canonical rows (shuffled with ``_BASE_SEED``). An unpenalised logistic fit
+        of y on those log-odds gives ``a`` and ``b``; the model kept is the
+        full-data block, with calibrated log-odds ``a * eta(x) + b``. The
+        map is affine, so the log-odds stay additive over terms and, with
+        ``a > 0``, every term keeps its sign. If ``a <= 0`` the calibration
+        is not applied (warning; ``calibration_info_["applied"]`` False).
+        """
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.model_selection import StratifiedKFold
+
+        from .constrained import PlattLogit, solve_block_logistic
+
+        Zs, _, _, _, C, alpha, w, lo, hi = self._constrained_problem(
+            X_all, col_center, col_sd
+        )
+        eta = np.empty(len(y))
+        # Shuffled (fixed seed): the canonical row sort would otherwise make
+        # each fold a contiguous range of the first feature.
+        folds = StratifiedKFold(
+            n_splits=self._PLATT_FOLDS, shuffle=True, random_state=self._BASE_SEED
+        )
+        for tr, te in folds.split(Zs, y):
+            res = solve_block_logistic(
+                Zs[tr], y[tr], 1.0 / (C * len(tr)), alpha, w, lo, hi
+            )
+            eta[te] = res["intercept"] + Zs[te] @ res["coef"]
+        lr = LogisticRegression(penalty=None, solver="lbfgs", tol=1e-10, max_iter=1000)
+        lr.fit(eta.reshape(-1, 1), y)
+        a, b = float(lr.coef_[0, 0]), float(lr.intercept_[0])
+        applied = a > 0
+        if not applied:
+            warnings.warn(
+                f"Platt scaling gave slope a={a:.3g} <= 0 on out-of-fold "
+                "log-odds; calibration not applied (it would reverse the "
+                "terms' signs).",
+                UserWarning,
+                stacklevel=3,
+            )
+        self.calibration_info_ = {
+            "method": "sigmoid",
+            "a": a,
+            "b": b,
+            "n_folds": self._PLATT_FOLDS,
+            "applied": bool(applied),
+        }
+        self.calibrator_ = PlattLogit(self.final_model_, a, b) if applied else None
 
     def _refit_with_confirmatory(self, X_all, y):
         """Refit the final model with confirmatory features unpenalized.
@@ -1350,11 +1467,13 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     def _build_full_matrix(self, X):
         """Unweighted candidate matrix [linear | generated rules | expert rules]."""
         X = np.asarray(X, dtype=np.float64)
-        X_rules_sparse = build_rule_feature_matrix(self.base_rulefit_, X)
+        X_rules_sparse = build_rule_feature_matrix(
+            self.base_rulefit_, self._canonical_columns(X)
+        )
 
         expert_columns = []
         for rule in list(self.confirmatory_rules_) + list(self.optional_rules_):
-            col = np.asarray(rule["evaluate"](X, self.feature_names_), dtype=np.float64)
+            col = np.asarray(rule["evaluate"](X, self._input_names()), dtype=np.float64)
             expert_columns.append(sparse.csc_matrix(col).T)
 
         if expert_columns:
@@ -1859,6 +1978,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             ``rules_sha256``: sorted names of active terms;
             ``coefficients_sha256``: intercept and coefficients (float64
             bytes, original scale, in stable-column order) with their names;
+            ``schema_sha256``: ``column_order`` and the feature names in
+            the model's (canonical) column order;
             ``predictions_sha256`` (if ``X`` is given): float64 bytes of the
             predicted probabilities, plus ``n_predictions``.
         """
@@ -1874,7 +1995,15 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         h = hashlib.sha256(json.dumps(names).encode())
         h.update(np.float64(self._get_true_intercept()).tobytes())
         h.update(coefs.tobytes())
-        fp = {"rules_sha256": h_rules, "coefficients_sha256": h.hexdigest()}
+        schema = {
+            "column_order": getattr(self, "column_order", "as_given"),
+            "feature_names": [str(f) for f in self.feature_names_],
+        }
+        fp = {
+            "rules_sha256": h_rules,
+            "coefficients_sha256": h.hexdigest(),
+            "schema_sha256": hashlib.sha256(json.dumps(schema).encode()).hexdigest(),
+        }
         if X is not None:
             p = np.ascontiguousarray(self.predict_proba(X)[:, 1], dtype=np.float64)
             fp["predictions_sha256"] = hashlib.sha256(p.tobytes()).hexdigest()
@@ -1919,6 +2048,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "intercept": self._get_true_intercept(),
             "standardize": getattr(self, "standardize", False),
             "row_order": getattr(self, "row_order", "as_given"),
+            "column_order": getattr(self, "column_order", "as_given"),
+            "input_feature_names": list(self._input_names()),
             "confirmatory_mode": getattr(self, "confirmatory_mode", "refit"),
             "confirmatory_bound_active": [
                 st["name"]
@@ -1929,6 +2060,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "resampling": getattr(self, "resampling", "bootstrap"),
             "candidates": getattr(self, "candidates", "rulefit"),
             "constrained_info": getattr(self, "constrained_info_", None),
+            "calibration": getattr(self, "calibration", None),
+            "calibration_info": getattr(self, "calibration_info_", None),
             "fingerprint": self.fingerprint(X_reference),
             "n_candidate_features": len(self.rule_names_),
             "n_stable_features": int(self.stable_mask_.sum()),
@@ -2100,6 +2233,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "bootstrap_frequencies_": self.bootstrap_frequencies_,
             "rule_names_": self.rule_names_,
             "feature_names_": self.feature_names_,
+            "input_feature_names_": getattr(self, "input_feature_names_", None),
+            "column_order_": getattr(self, "column_order_", None),
             "expert_categories_": self.expert_categories_,
             "n_stable_rules_": self.n_stable_rules_,
             "n_auto_features_": self.n_auto_features_,
@@ -2109,6 +2244,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
             "confirmatory_sign_ok_": getattr(self, "confirmatory_sign_ok_", True),
             "constrained_info_": getattr(self, "constrained_info_", None),
             "confirmatory_diagnostics_": getattr(self, "confirmatory_diagnostics_", []),
+            "calibrator_": getattr(self, "calibrator_", None),
+            "calibration_info_": getattr(self, "calibration_info_", None),
         }
         joblib.dump(state, path)
 
@@ -2144,6 +2281,7 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         # Settings added later: record what older models were fitted with
         for key, old in (
             ("row_order", "as_given"),
+            ("column_order", "as_given"),
             ("confirmatory_mode", "refit"),
             ("resampling", "bootstrap"),
             ("candidates", "rulefit"),
@@ -2164,6 +2302,11 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         model.bootstrap_frequencies_ = state["bootstrap_frequencies_"]
         model.rule_names_ = state["rule_names_"]
         model.feature_names_ = state["feature_names_"]
+        # Saved before 0.8.1: columns were used in the order given
+        model.input_feature_names_ = (
+            state.get("input_feature_names_") or model.feature_names_
+        )
+        model.column_order_ = state.get("column_order_")
         model.expert_categories_ = state["expert_categories_"]
         model.n_stable_rules_ = state["n_stable_rules_"]
         model.n_auto_features_ = state["n_auto_features_"]
@@ -2174,6 +2317,8 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
         model.confirmatory_sign_ok_ = state.get("confirmatory_sign_ok_", True)
         model.constrained_info_ = state.get("constrained_info_")
         model.confirmatory_diagnostics_ = state.get("confirmatory_diagnostics_", [])
+        model.calibrator_ = state.get("calibrator_")
+        model.calibration_info_ = state.get("calibration_info_")
         model.confirmatory_rules_ = confirmatory_rules or []
         model.optional_rules_ = optional_rules or []
 
@@ -2182,6 +2327,20 @@ class ExpertRuleFit(BaseEstimator, ClassifierMixin):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _input_names(self):
+        """Feature names in the column order given to fit (expert rules)."""
+        return getattr(self, "input_feature_names_", None) or self.feature_names_
+
+    def _canonical_columns(self, X):
+        """Columns of X (input order) in the model's column order."""
+        perm = getattr(self, "column_order_", None)
+        if X.ndim != 2 or X.shape[1] != len(self.feature_names_):
+            raise ValueError(
+                f"X has {X.shape[1] if X.ndim == 2 else X.shape} columns, the "
+                f"model was fitted on {len(self.feature_names_)}"
+            )
+        return X if perm is None else X[:, perm]
 
     def _build_rule_names(self, n_features):
         """Build unique human-readable names for all rule features."""

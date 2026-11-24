@@ -50,6 +50,7 @@ def test_defaults():
 
 def test_statistics_stored(fitted, raw_data):
     X, _, _ = raw_data
+    X = X[:, fitted.column_order_]  # linear terms are in canonical column order
     p = X.shape[1]
     assert fitted.col_center_.shape == fitted.col_sd_.shape
     # linear columns centred on training means, rule/expert columns not centred

@@ -223,11 +223,11 @@ refit remains available as `confirmatory_mode="refit"`.
 # Reproducibility guarantee
 
 The guarantee is bitwise determinism within an execution envelope: the
-same set of training rows, with the same column order, on the same
-software stack, yields the same rule set and predictions. The envelope
-requires pinned versions of Python, NumPy, scikit-learn and imodels;
-single-threaded BLAS and OpenMP; the fixed internal seeds; a validated
-input schema with stable feature order; and identical platform settings.
+same set of training rows, on the same software stack and *the same CPU
+model*, yields the same rule set and predictions. Rows and (since 0.8.1)
+columns are sorted before fitting, so their order does not matter. The
+envelope requires pinned versions of Python, NumPy, scikit-learn and
+imodels, single-threaded BLAS and OpenMP, and the fixed internal seeds.
 A container recipe (base image pinned by digest, dependencies installed
 from a hash-locked file) is provided in the repository.
 
@@ -252,13 +252,11 @@ among many, which is the stability question of
 Section <a href="#sec:exp" data-reference-type="ref"
 data-reference="sec:exp">5</a>.
 
-The guarantee does not cover different data, a different software stack
-or CPU, or column order: in our runs a different column order from
-another preprocessing script changed the fitted model, so columns must
-be ordered by a fixed schema. Identity across machines has not been
-tested: all results in this report come from one x86-64 machine (Intel
-Xeon, 2.1 GHz), and runs on another CPU type, even with the same
-container, may differ in the last bits of floating-point results.
+The guarantee does not cover different data, software stack or CPU
+model. On three CPU models (Intel Xeon; AMD EPYC 9V45, 7763) the same
+container gave identical rule sets and AUC but probabilities differing
+in their last bits, presumably from CPU-specific BLAS kernels; pinning
+the kernel is future work.
 
 # Experiments
 

@@ -4,6 +4,8 @@ Results labelled C3/B2/A6/B3 were produced with ExpertRuleFit 0.7.0 code (bootst
 
 | Item | What | Files | Command |
 |---|---|---|---|
+| B1 (0.8.1) | 25 stratified 90 % subsamples, German / HMEQ / Taiwan, arms rulefit_fixed_seed, erf_default, erf_trees; **German ERF arms invalid** (empty models from unshuffled CV on canonically sorted rows, FINDINGS §21) | `b1_v081/` | push to `run/b1-<name>` (`.github/workflows/experiments.yml`) |
+| Table 1 (0.8.1) | Seed sensitivity, 3 datasets, 0.8.1 defaults (canonical columns), on GitHub Actions; RuleFit fits reused from `table1_v080` and checked (`reuse_check_*.json`); FINDINGS §20 | `table1_v081/` (second run on another CPU: `run1_ffe5a57/`) | push to `run/table1-<name>` (`.github/workflows/experiments.yml`) |
 | Table 1 (0.8.0) | Seed sensitivity, 3 datasets, library defaults (RuleFit × 100 seeds reused from `table1/`, ExpertRuleFit × 3 runs) | `table1_v080/` (filter-on intermediate run: `table1_v080_filter/`; 0.7.0: `table1/`) | `python experiments/table1.py --out experiments/results/table1_v080` |
 | B1 | Stability under 25 stratified 90 % subsamples, German Credit: fixed-seed RuleFit vs ExpertRuleFit with and without the filter | `b1/german.md`, `b1/german_summary.json` | `python experiments/b1_stability.py --dataset german` |
 | B3 | Penalty-weight grid w_c × w_o, German Credit | `sensitivity/` | `python experiments/sensitivity.py --datasets german` |

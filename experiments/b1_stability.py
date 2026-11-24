@@ -10,9 +10,17 @@ No expert rules: this isolates rule generation and selection.
 Arms
 ----
 rulefit_fixed_seed  imodels RuleFit, internal seed fixed at 42 (key control)
-erf_default         ExpertRuleFit defaults (selection-frequency filter on)
+erf_default         ExpertRuleFit library defaults. Up to 0.8.0 results
+                    (results/b1/german*) this had the filter on; since the
+                    0.8.0 B1 decision the default is selection="none".
 erf_no_filter       ExpertRuleFit, selection="none"
-erf_trees           ExpertRuleFit, candidates="trees" (optional, slow)
+erf_filter          ExpertRuleFit, selection="bootstrap" (filter on, slow)
+erf_trees           ExpertRuleFit, candidates="trees" (decision b, slow)
+
+--k-start/--k-stop restrict the subsample indices (k = -1 is the full
+training split), so GitHub Actions can split one dataset over many jobs;
+the chunks' jsonl files are concatenated and summarised with
+--summarize-only (.github/workflows/b1.yml).
 
 Metrics over all pairs of perturbed fits
 ----------------------------------------
@@ -61,7 +69,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 BASE_SEED = 20261123
-ARMS = ("rulefit_fixed_seed", "erf_default", "erf_no_filter", "erf_trees")
+ARMS = ("rulefit_fixed_seed", "erf_default", "erf_no_filter", "erf_filter", "erf_trees")
 _PREFIX = re.compile(r"^rule\[\d+\]:")
 
 
@@ -125,12 +133,18 @@ def run(task):
         kw = {
             "erf_default": {},
             "erf_no_filter": {"selection": "none"},
+            "erf_filter": {"selection": "bootstrap"},
             "erf_trees": {"candidates": "trees"},
         }[arm]
         m = ExpertRuleFit(**kw).fit(X_tr, y_tr, feature_names=names)
         p = m.predict_proba(X_te)[:, 1]
         stable = np.where(m.stable_mask_)[0]
         coefs = m._get_true_coefficients()
+        # Model column order (canonical by name since 0.8.1): linear terms
+        # and the X_<i> placeholders of generated rules index these columns.
+        names = list(m.feature_names_)
+        X_te = X_te[:, getattr(m, "column_order_", np.arange(X_te.shape[1]))]
+        fingerprint = m.fingerprint()
         n_lin = len(names)
         lin, rules = [], []
         base_rules = m.base_rulefit_.rules_without_feature_names_
@@ -142,6 +156,8 @@ def run(task):
             else:
                 rw = base_rules[i - n_lin]
                 rules.append((_PREFIX.sub("", m.rule_names_[i]), rw.rule))
+    if arm == "rulefit_fixed_seed":
+        fingerprint = None
     fit_s = time.perf_counter() - t0
     acts = [eval_rule_on_data(rw, X_te).astype(bool) for _, rw in rules]
     return {
@@ -157,7 +173,15 @@ def run(task):
         "activations": [np.packbits(a).tolist() for a in acts],
         "n_test": int(len(y_te)),
         "fit_seconds": round(fit_s, 1),
+        "fingerprint": fingerprint,
+        "erf_version": _erf_version(),
     }
+
+
+def _erf_version():
+    from expertrulefit._version import __version__
+
+    return __version__
 
 
 def _unpack(packed, n):
@@ -259,6 +283,8 @@ def main():
     ap.add_argument("--dataset", default="german")
     ap.add_argument("--arms", nargs="+", default=list(ARMS[:3]), choices=ARMS)
     ap.add_argument("--n-sub", type=int, default=25)
+    ap.add_argument("--k-start", type=int, default=-1)
+    ap.add_argument("--k-stop", type=int, default=None, help="exclusive; default n-sub")
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--data-dir", default=str(HERE / "data"))
     ap.add_argument("--out", default=str(HERE / "results" / "b1"))
@@ -276,7 +302,9 @@ def main():
             }
         tasks = [
             {"dataset": args.dataset, "arm": a, "k": k, "data_dir": args.data_dir}
-            for k in range(-1, args.n_sub)
+            for k in range(
+                args.k_start, args.n_sub if args.k_stop is None else args.k_stop
+            )
             for a in args.arms
             if (a, k) not in done
         ]

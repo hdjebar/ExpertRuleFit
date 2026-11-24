@@ -1,0 +1,218 @@
+name: Experiments (pinned image)
+
+# Long experiment runs that do not fit in a chat session: B1 (stability
+# under data perturbation) and the Table 1 rerun. Everything runs in the
+# pinned docker/ image, with --network none; only fetch_data.py (on the
+# runner) needs the network. Results are committed to the branch
+# results/<run_name> (one commit per run).
+#
+# Start a run either with "Run workflow" (once this file is on main), or by
+# pushing the code to a branch named run/<name>: a push uses the defaults
+# below, runs table1 if <name> contains "table1" (else b1), and commits to
+# results/<name>.
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: "b1 or table1"
+        default: "b1"
+      datasets:
+        description: "space-separated: german hmeq taiwan"
+        default: "german hmeq taiwan"
+      arms:
+        description: "B1 arms (space-separated)"
+        default: "rulefit_fixed_seed erf_default erf_trees"
+      n_sub:
+        description: "B1 subsamples per dataset"
+        default: "25"
+      chunk:
+        description: "B1 subsample indices per job"
+        default: "1"
+      run_name:
+        description: "results branch suffix"
+        default: "b1-v081"
+  push:
+    branches: ["run/**"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: experiments-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPERIMENT: ${{ inputs.experiment || (contains(github.ref_name, 'table1') && 'table1' || 'b1') }}
+  DATASETS: ${{ inputs.datasets || 'german hmeq taiwan' }}
+  ARMS: ${{ inputs.arms || 'rulefit_fixed_seed erf_default erf_trees' }}
+  N_SUB: ${{ inputs.n_sub || '25' }}
+  CHUNK: ${{ inputs.chunk || '1' }}
+  RUN_NAME: ${{ inputs.run_name || github.ref_name }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        shell: python
+        run: |
+          import json, os
+          ds = os.environ["DATASETS"].split()
+          if os.environ["EXPERIMENT"] == "table1":
+              inc = [{"dataset": d, "k_start": 0, "k_stop": 0} for d in ds]
+          else:
+              n, c = int(os.environ["N_SUB"]), int(os.environ["CHUNK"])
+              # k = -1 is the fit on the full training split
+              inc = [{"dataset": d, "k_start": a, "k_stop": min(a + c, n)}
+                     for d in ds for a in range(-1, n, c)]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("matrix=" + json.dumps({"include": inc}) + "\n")
+
+  data:
+    # Fetch each dataset once (the HMEQ host rate-limits: HTTP 429) and give
+    # every job the same files; SHA-256 sums are kept with the results.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch data (network), with retries
+        run: |
+          python3 -m pip install --quiet ucimlrepo pandas
+          for d in $DATASETS; do
+            for attempt in 1 2 3 4 5 6; do
+              python3 experiments/fetch_data.py --datasets $d && break
+              [ $attempt = 6 ] && exit 1
+              sleep $((attempt * 60))
+            done
+          done
+          (cd experiments/data && sha256sum *.csv | tee SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data
+          path: experiments/data/
+
+  run:
+    needs: [plan, data]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pinned image
+        run: |
+          docker build -f docker/Dockerfile -t erf-pinned . \
+            || docker build -f docker/Dockerfile -t erf-pinned . \
+                 --build-arg BASE_IMAGE=mirror.gcr.io/library/python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: data
+          path: experiments/data
+
+      - name: Record the machine (best effort)
+        run: |
+          mkdir -p out
+          f=out/machine-${{ matrix.dataset }}-${{ matrix.k_start }}.txt
+          { lscpu; nproc; free -g; } > "$f" 2>&1 || true
+          docker run --rm erf-pinned python -c "import importlib.metadata as m, numpy; \
+            print({p: m.version(p) for p in ('numpy', 'scikit-learn', 'imodels', 'expertrulefit')}); \
+            numpy.show_config()" >> "$f" 2>&1 || true
+
+      - name: Run B1 chunk
+        if: env.EXPERIMENT == 'b1'
+        run: |
+          docker run --rm --network none -v "$PWD":/work -w /work -e PYTHONPATH=/work \
+            erf-pinned python experiments/b1_stability.py \
+              --dataset ${{ matrix.dataset }} --arms $ARMS --n-sub $N_SUB \
+              --k-start ${{ matrix.k_start }} --k-stop ${{ matrix.k_stop }} \
+              --jobs "$(nproc)" --out out/b1
+
+      - name: Run Table 1 ERF runs (RuleFit fits reused from table1_v080)
+        if: env.EXPERIMENT == 'table1'
+        run: |
+          mkdir -p out/table1
+          grep '"dataset": "${{ matrix.dataset }}", "model": "rulefit"' \
+            experiments/results/table1_v080/fits.jsonl > out/table1/fits.jsonl
+          docker run --rm --network none -v "$PWD":/work -w /work -e PYTHONPATH=/work \
+            erf-pinned python experiments/table1.py --datasets ${{ matrix.dataset }} \
+              --erf-runs 3 --jobs 3 --out out/table1
+
+      - name: Check the reused fits on this machine (RuleFit seeds 0-4, ERF as 0.8.0)
+        if: env.EXPERIMENT == 'table1'
+        run: |
+          docker run --rm --network none -v "$PWD":/work -w /work -e PYTHONPATH=/work \
+            erf-pinned python experiments/check_reuse.py --dataset ${{ matrix.dataset }} \
+              --out out/reuse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.dataset }}-${{ matrix.k_start }}
+          path: out/
+
+  collect:
+    needs: run
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+          pattern: part-*
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: data
+          path: data-used
+
+      - name: Build pinned image
+        run: |
+          docker build -f docker/Dockerfile -t erf-pinned . \
+            || docker build -f docker/Dockerfile -t erf-pinned . \
+                 --build-arg BASE_IMAGE=mirror.gcr.io/library/python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+
+      - name: Merge parts and summarise
+        run: |
+          set -e
+          RN=${RUN_NAME#run/}
+          dest=experiments/results/${RN//-/_}
+          mkdir -p "$dest/machines"
+          cp parts/*/machine-*.txt "$dest/machines/" || true
+          if [ "$EXPERIMENT" = "b1" ]; then
+            for d in $DATASETS; do
+              cat parts/*/b1/$d.jsonl > "$dest/$d.jsonl" 2>/dev/null || continue
+              docker run --rm --network none -v "$PWD":/work -w /work -e PYTHONPATH=/work \
+                erf-pinned python experiments/b1_stability.py --dataset $d \
+                  --out "$dest" --summarize-only
+            done
+          else
+            cat parts/*/table1/fits.jsonl > "$dest/fits.jsonl"
+            cp parts/*/reuse/reuse_check_*.json "$dest/" || true
+            docker run --rm --network none -v "$PWD":/work -w /work -e PYTHONPATH=/work \
+              erf-pinned python experiments/table1.py --datasets $DATASETS \
+                --erf-runs 3 --out "$dest" --summarize-only
+          fi
+          cp data-used/SHA256SUMS "$dest/DATA_SHA256SUMS" || true
+          echo "source_sha=$GITHUB_SHA" > "$dest/RUN_INFO.txt"
+          echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$dest/RUN_INFO.txt"
+          echo "experiment=$EXPERIMENT datasets=$DATASETS arms=$ARMS n_sub=$N_SUB" >> "$dest/RUN_INFO.txt"
+
+      - name: Commit to results branch
+        run: |
+          RN=${RUN_NAME#run/}
+          dest=experiments/results/${RN//-/_}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "results/$RN"
+          git add -f "$dest"
+          git commit -m "results($RN): $EXPERIMENT on $DATASETS at $GITHUB_SHA"
+          git push -f origin "results/$RN"
