@@ -1,0 +1,49 @@
+{
+ "dataset": "hmeq",
+ "reference": "/work/experiments/results/table1_v080",
+ "checks": [
+  {
+   "model": "rulefit",
+   "seed": 0,
+   "rules_hash": true,
+   "auc": true,
+   "proba_sha256": false
+  },
+  {
+   "model": "rulefit",
+   "seed": 1,
+   "rules_hash": true,
+   "auc": true,
+   "proba_sha256": false
+  },
+  {
+   "model": "rulefit",
+   "seed": 2,
+   "rules_hash": true,
+   "auc": true,
+   "proba_sha256": false
+  },
+  {
+   "model": "rulefit",
+   "seed": 3,
+   "rules_hash": true,
+   "auc": true,
+   "proba_sha256": false
+  },
+  {
+   "model": "rulefit",
+   "seed": 4,
+   "rules_hash": true,
+   "auc": true,
+   "proba_sha256": false
+  },
+  {
+   "model": "erf_0.8.0_as_given",
+   "seed": 0,
+   "rules_hash": true,
+   "auc": true,
+   "proba_sha256": false
+  }
+ ],
+ "all_identical": false
+}
