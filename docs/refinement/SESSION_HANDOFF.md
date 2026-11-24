@@ -6,11 +6,11 @@
 
 | Item | Value |
 |---|---|
-| `main` | `ec79250`: PR #16 (Ebner citation) merged on top of PR #17 (CI fix, `0d997f8`). Version 0.8.0. CI green (lint, Python 3.10–3.12). |
-| Tag `v0.8.0` | Created on `ec79250` in the session, but **the push was refused** (HTTP 403 from the session's git proxy). The author must push it: `git tag -a v0.8.0 ec79250 -m "ExpertRuleFit 0.8.0" && git push origin v0.8.0`. |
-| Open PR | #18 `feat/columns-calibration` (draft): 0.8.1, decisions (c) and (d), the experiments workflow, and the Table 1 0.8.1 results. |
+| `main` | `a432213`: PR #19 (Ebner/Nalenz citations) on top of PR #16 (`ec79250`) and PR #17 (CI fix, `0d997f8`). Version 0.8.0. CI green (lint, Python 3.10–3.12). |
+| Tag `v0.8.0` | On `ec79250`, pushed by the author (sessions cannot push tags: HTTP 403). |
+| Open PR | #18 `feat/columns-calibration` (draft, up to date with `main`): 0.8.1, decisions (c) and (d), the "same CPU model" condition, the experiments workflow, and the Table 1 0.8.1 results. Stays a draft until B1 and decision (b) are in (author's decision). |
 | Experiment branches | `run/b1-v081` and `run/table1-v081` start `.github/workflows/experiments.yml` on push. Results are committed by the workflow to `results/b1-v081` (pending) and `results/table1-v081` (done, `c88f961`). |
-| Merged branches | `fix/ebner-citation`, `fix/ci` and `refinement/phase-a` can be deleted. |
+| Merged branches | `fix/ebner-citation`, `fix/ci`, `docs/nalenz-citation` and `refinement/phase-a` can be deleted; so can `run/source-nalenz` if it exists (it was never pushed). |
 | Tests | 124 passed on the pinned image at PR #18 (104 on `main`). |
 
 ## Done in this session
@@ -50,7 +50,11 @@
 
 ## Pending, in order
 
-1. **Author: push the tag `v0.8.0`** (command above).
+1. **Citations: done** (PR #19, FINDINGS §14). The sources cited are:
+   - Ebner (2021), master's thesis, Faculty of Science, VU Amsterdam (Nalenz 2021, p. 129, ref. 6);
+   - Ebner et al. (2021), 19th International Conference on Artificial Intelligence in Medicine, KR4HC Workshop (as printed in Nalenz 2021, p. XI; reprint pp. 117–130; no LNCS volume);
+   - Nalenz (2021), LMU dissertation (p. XII, §3.1.3), read from the PDF supplied by the author;
+   - the ERF R package.
 2. **B1 under 0.8.1** (`run/b1-v081`, Actions run 45302909823, source `9a2321d`):
    - Covers German, HMEQ and Taiwan; arms `rulefit_fixed_seed`, `erf_default` and `erf_trees`; 25 subsamples plus the full fit.
    - German jobs took about 8 min. HMEQ/Taiwan `erf_trees` fits may take hours (job limit 350 min).
