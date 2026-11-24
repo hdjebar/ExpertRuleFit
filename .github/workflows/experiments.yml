@@ -38,6 +38,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: experiments-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   EXPERIMENT: ${{ inputs.experiment || (contains(github.ref_name, 'table1') && 'table1' || 'b1') }}
   DATASETS: ${{ inputs.datasets || 'german hmeq taiwan' }}
@@ -67,8 +71,30 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write("matrix=" + json.dumps({"include": inc}) + "\n")
 
+  data:
+    # Fetch each dataset once (the HMEQ host rate-limits: HTTP 429) and give
+    # every job the same files; SHA-256 sums are kept with the results.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch data (network), with retries
+        run: |
+          python3 -m pip install --quiet ucimlrepo pandas
+          for d in $DATASETS; do
+            for attempt in 1 2 3 4 5 6; do
+              python3 experiments/fetch_data.py --datasets $d && break
+              [ $attempt = 6 ] && exit 1
+              sleep $((attempt * 60))
+            done
+          done
+          (cd experiments/data && sha256sum *.csv | tee SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data
+          path: experiments/data/
+
   run:
-    needs: plan
+    needs: [plan, data]
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     strategy:
@@ -84,10 +110,10 @@ jobs:
             || docker build -f docker/Dockerfile -t erf-pinned . \
                  --build-arg BASE_IMAGE=mirror.gcr.io/library/python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
 
-      - name: Fetch data (runner, network)
-        run: |
-          python3 -m pip install --quiet ucimlrepo pandas
-          python3 experiments/fetch_data.py --datasets ${{ matrix.dataset }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: data
+          path: experiments/data
 
       - name: Record the machine (best effort)
         run: |
@@ -134,6 +160,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: parts
+          pattern: part-*
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: data
+          path: data-used
 
       - name: Build pinned image
         run: |
@@ -161,6 +193,7 @@ jobs:
               erf-pinned python experiments/table1.py --datasets $DATASETS \
                 --erf-runs 3 --out "$dest" --summarize-only
           fi
+          cp data-used/SHA256SUMS "$dest/DATA_SHA256SUMS" || true
           echo "source_sha=$GITHUB_SHA" > "$dest/RUN_INFO.txt"
           echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$dest/RUN_INFO.txt"
           echo "experiment=$EXPERIMENT datasets=$DATASETS arms=$ARMS n_sub=$N_SUB" >> "$dest/RUN_INFO.txt"
